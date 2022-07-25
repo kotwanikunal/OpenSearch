@@ -361,11 +361,16 @@ public class RestoreService implements ClusterStateApplier {
                                     request.indexSettings(),
                                     request.ignoreIndexSettings()
                                 );
-                                snapshotIndexMetadata = addSnapshotToIndexSettings(
-                                    snapshotIndexMetadata,
-                                    snapshot,
-                                    repositoryData.resolveIndexId(index)
-                                );
+
+                                // Remote snapshot logic during shard initialization depends on the snapshot settings
+                                // Avoid adding these if the snapshot is being restored locally.
+                                if (renamedIndexName.startsWith("restored_")) {
+                                    snapshotIndexMetadata = addSnapshotToIndexSettings(
+                                        snapshotIndexMetadata,
+                                        snapshot,
+                                        repositoryData.resolveIndexId(index)
+                                    );
+                                }
                                 try {
                                     snapshotIndexMetadata = metadataIndexUpgradeService.upgradeIndexMetadata(
                                         snapshotIndexMetadata,

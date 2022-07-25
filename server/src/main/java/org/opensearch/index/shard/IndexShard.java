@@ -1938,7 +1938,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 translogRecoveryStats::incrementRecoveredOperations
             );
         };
-        //loadGlobalCheckpointToReplicationTracker();
+
+        // Do not load the global checkpoint if the store is remote.
+        if (!IndexSettings.SNAPSHOT_REPOSITORY.exists(this.indexSettings.getSettings())) {
+            loadGlobalCheckpointToReplicationTracker();
+        }
+
         innerOpenEngineAndTranslog(replicationTracker);
         getEngine().translogManager()
             .recoverFromTranslog(translogRecoveryRunner, getEngine().getProcessedLocalCheckpoint(), Long.MAX_VALUE);

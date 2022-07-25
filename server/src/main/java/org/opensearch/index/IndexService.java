@@ -87,7 +87,7 @@ import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.index.shard.ShardNotInPrimaryModeException;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.similarity.SimilarityService;
-import org.opensearch.index.store.RemoteSnapshotDirectoryFactory;
+import org.opensearch.index.store.remote.directory.RemoteSnapshotDirectoryFactory;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.breaker.CircuitBreakerService;
@@ -532,7 +532,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             if (IndexSettings.SNAPSHOT_REPOSITORY.exists(this.indexSettings.getSettings())) {
                 try {
                     final Repository repository = repositoriesService.repository(
-                        IndexSettings.SNAPSHOT_REPOSITORY.get(this.indexSettings.getSettings()));
+                        IndexSettings.SNAPSHOT_REPOSITORY.get(this.indexSettings.getSettings())
+                    );
                     directory = new RemoteSnapshotDirectoryFactory().newDirectory(this.indexSettings, path, repository);
                 } catch (RepositoryMissingException e) {
                     throw new IllegalArgumentException(

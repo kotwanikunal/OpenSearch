@@ -6,25 +6,30 @@
  * compatible open source license.
  */
 
-package org.opensearch.index.store;
+package org.opensearch.index.store.remote.directory;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.Lock;
 import org.apache.lucene.store.NoLockFactory;
 import org.opensearch.common.blobstore.BlobContainer;
-import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot;
+import org.opensearch.index.store.remote.file.BlockedSnapshotIndexInput;
+import org.opensearch.index.store.remote.file.VirtualFileIndexInput;
+import org.opensearch.index.store.remote.file.VirtualSnapshotFileIndexInput;
 
 public class RemoteSnapshotDirectory extends Directory {
 
@@ -32,15 +37,19 @@ public class RemoteSnapshotDirectory extends Directory {
     private final BlobStoreIndexShardSnapshot snapshot;
     private final Map<String, BlobStoreIndexShardSnapshot.FileInfo> fileInfoMap;
 
+    private final FSDirectory fsDirectory;
+    public static final Map<String, IndexInput> EXISTING_BLOCKS = new HashMap<>();
 
-    public RemoteSnapshotDirectory(BlobContainer blobContainer,
-        BlobStoreIndexShardSnapshot snapshot) {
+    protected final Logger logger;
+
+    public RemoteSnapshotDirectory(BlobContainer blobContainer, BlobStoreIndexShardSnapshot snapshot, FSDirectory fsDirectory) {
         this.blobContainer = blobContainer;
         this.snapshot = snapshot;
-        this.fileInfoMap = snapshot.indexFiles().stream()
-            .collect(Collectors.toMap(
-                BlobStoreIndexShardSnapshot.FileInfo::physicalName,
-                f -> f));
+        this.fileInfoMap = snapshot.indexFiles()
+            .stream()
+            .collect(Collectors.toMap(BlobStoreIndexShardSnapshot.FileInfo::physicalName, f -> f));
+        this.fsDirectory = fsDirectory;
+        this.logger = LogManager.getLogger(getClass());
     }
 
     @Override
@@ -48,10 +57,8 @@ public class RemoteSnapshotDirectory extends Directory {
         return fileInfoMap.keySet().toArray(new String[0]);
     }
 
-
     @Override
-    public void deleteFile(String name) throws IOException {
-    }
+    public void deleteFile(String name) throws IOException {}
 
     @Override
     public IndexOutput createOutput(String name, IOContext context) {
@@ -64,17 +71,19 @@ public class RemoteSnapshotDirectory extends Directory {
 
         // Virtual files are contained entirely in the metadata hash field
         if (fi.name().startsWith("v__")) {
-            return new ByteArrayIndexInput(name, fi.metadata().hash().bytes);
+            return VirtualSnapshotFileIndexInput.builder()
+                .fileInfo(fileInfoMap.get(name))
+                .fileBuilder(
+                    new VirtualFileIndexInput.RemoteFileBuilder(name, fileInfoMap.get(name).length(), fileInfoMap.get(name).length())
+                        .directory(fsDirectory)
+                )
+                .build();
         }
-
-        try (InputStream is = blobContainer.readBlob(fi.name())) {
-            return new ByteArrayIndexInput(name, is.readAllBytes());
-        }
+        return new BlockedSnapshotIndexInput(fi, fsDirectory, blobContainer);
     }
 
     @Override
-    public void close() throws IOException {
-    }
+    public void close() throws IOException {}
 
     @Override
     public long fileLength(String name) throws IOException {

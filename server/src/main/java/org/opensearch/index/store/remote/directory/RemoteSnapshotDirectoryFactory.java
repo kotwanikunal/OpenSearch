@@ -6,28 +6,30 @@
  * compatible open source license.
  */
 
-package org.opensearch.index.store;
+package org.opensearch.index.store.remote.directory;
 
 import java.io.IOException;
+import java.nio.file.Path;
 
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot;
-import org.opensearch.plugins.IndexStorePlugin;
 import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.blobstore.BlobStoreRepository;
 import org.opensearch.snapshots.SnapshotId;
 
 public class RemoteSnapshotDirectoryFactory {
 
+    public static final String REMOTE_STORE_LOCATION = "RemoteStore";
+
     public Directory newDirectory(IndexSettings indexSettings, ShardPath path, Repository repository) throws IOException {
         assert repository instanceof BlobStoreRepository : "repository should be instance of BlobStoreRepository";
         final BlobStoreRepository blobStoreRepository = (BlobStoreRepository) repository;
-        final BlobPath blobPath = new BlobPath()
-            .add("indices")
+        final BlobPath blobPath = new BlobPath().add("indices")
             .add(IndexSettings.SNAPSHOT_INDEX_ID.get(indexSettings.getSettings()))
             .add(Integer.toString(path.getShardId().getId()));
         final BlobContainer blobContainer = blobStoreRepository.blobStore().blobContainer(blobPath);
@@ -35,7 +37,11 @@ public class RemoteSnapshotDirectoryFactory {
             IndexSettings.SNAPSHOT_ID_NAME.get(indexSettings.getSettings()),
             IndexSettings.SNAPSHOT_ID_UUID.get(indexSettings.getSettings())
         );
+        Path shardActualPath = path.getDataPath().resolve(REMOTE_STORE_LOCATION);
         final BlobStoreIndexShardSnapshot snapshot = blobStoreRepository.loadShardSnapshot(blobContainer, snapshotId);
-        return new RemoteSnapshotDirectory(blobContainer, snapshot);
+        FSDirectory fsDirectory = FSDirectory.open(shardActualPath);
+
+        return new RemoteSnapshotDirectory(blobContainer, snapshot, fsDirectory);
+
     }
 }
