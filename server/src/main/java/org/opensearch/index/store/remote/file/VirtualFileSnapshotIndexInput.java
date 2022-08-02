@@ -22,14 +22,14 @@ import java.nio.file.Path;
 
 import static org.opensearch.core.internal.io.IOUtils.closeWhileHandlingException;
 
-public final class VirtualSnapshotFileIndexInput extends VirtualFileIndexInput {
+public final class VirtualFileSnapshotIndexInput extends VirtualFileIndexInput {
 
     /**
      * FileInfo contains snapshot metadata references for this IndexInput
      */
     private FileInfo fileInfo;
 
-    VirtualSnapshotFileIndexInput(Builder builder) {
+    VirtualFileSnapshotIndexInput(Builder builder) {
         super(builder.fileBuilder);
         this.fileInfo = builder.fileInfo;
     }
@@ -56,8 +56,8 @@ public final class VirtualSnapshotFileIndexInput extends VirtualFileIndexInput {
     }
 
     @Override
-    public VirtualSnapshotFileIndexInput clone() {
-        VirtualSnapshotFileIndexInput clone = buildSlice("clone", 0, length());
+    public VirtualFileSnapshotIndexInput clone() {
+        VirtualFileSnapshotIndexInput clone = buildSlice("clone", 0, length());
         // ensures that clones may be positioned at the same point as the blocked file they were cloned from
         if (currentInput != null) {
             clone.currentInput = currentInput.clone();
@@ -70,8 +70,8 @@ public final class VirtualSnapshotFileIndexInput extends VirtualFileIndexInput {
     /**
      * Builds the actual sliced IndexInput.
      **/
-    private VirtualSnapshotFileIndexInput buildSlice(String sliceDescription, long offset, long length) {
-        VirtualSnapshotFileIndexInput slice = builder().fileInfo(this.fileInfo)
+    private VirtualFileSnapshotIndexInput buildSlice(String sliceDescription, long offset, long length) {
+        VirtualFileSnapshotIndexInput slice = builder().fileInfo(this.fileInfo)
             .fileBuilder(
                 new RemoteFileBuilder(this.fileName, fileInfo.length(), length).directory(this.directory)
                     .offset(this.offset + offset)
@@ -133,14 +133,14 @@ public final class VirtualSnapshotFileIndexInput extends VirtualFileIndexInput {
             return this;
         }
 
-        public VirtualSnapshotFileIndexInput build() {
-            return new VirtualSnapshotFileIndexInput(this);
+        public VirtualFileSnapshotIndexInput build() {
+            return new VirtualFileSnapshotIndexInput(this);
         }
     }
 
     /*
         Access modifiers class and methods within the Store class had to be updated to enable VerifyingOutput
-        TODO: Find an alternative which can create the IndexOutput without higher level changes.
+        TODO: Find an alternative which can create the IndexOutput without Store level changes.
      */
     public static IndexOutput createVerifyingOutput(
         Directory directory,

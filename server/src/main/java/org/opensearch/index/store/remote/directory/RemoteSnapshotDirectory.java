@@ -29,20 +29,21 @@ import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot;
 import org.opensearch.index.store.remote.file.BlockedSnapshotIndexInput;
 import org.opensearch.index.store.remote.file.VirtualFileIndexInput;
-import org.opensearch.index.store.remote.file.VirtualSnapshotFileIndexInput;
+import org.opensearch.index.store.remote.file.VirtualFileSnapshotIndexInput;
+import org.opensearch.index.store.remote.util.TransferManager;
 
 public class RemoteSnapshotDirectory extends Directory {
 
+    private static final String VIRTUAL_FILE_PREFIX = "v__";
     private final BlobContainer blobContainer;
     private final BlobStoreIndexShardSnapshot snapshot;
     private final Map<String, BlobStoreIndexShardSnapshot.FileInfo> fileInfoMap;
-
     private final FSDirectory fsDirectory;
-    public static final Map<String, IndexInput> EXISTING_BLOCKS = new HashMap<>();
 
     protected final Logger logger;
+    private final TransferManager transferManager;
 
-    public RemoteSnapshotDirectory(BlobContainer blobContainer, BlobStoreIndexShardSnapshot snapshot, FSDirectory fsDirectory) {
+    public RemoteSnapshotDirectory(BlobContainer blobContainer, BlobStoreIndexShardSnapshot snapshot, FSDirectory fsDirectory, TransferManager transferManager) {
         this.blobContainer = blobContainer;
         this.snapshot = snapshot;
         this.fileInfoMap = snapshot.indexFiles()
@@ -50,6 +51,7 @@ public class RemoteSnapshotDirectory extends Directory {
             .collect(Collectors.toMap(BlobStoreIndexShardSnapshot.FileInfo::physicalName, f -> f));
         this.fsDirectory = fsDirectory;
         this.logger = LogManager.getLogger(getClass());
+        this.transferManager = transferManager;
     }
 
     @Override
@@ -70,8 +72,8 @@ public class RemoteSnapshotDirectory extends Directory {
         final BlobStoreIndexShardSnapshot.FileInfo fi = fileInfoMap.get(name);
 
         // Virtual files are contained entirely in the metadata hash field
-        if (fi.name().startsWith("v__")) {
-            return VirtualSnapshotFileIndexInput.builder()
+        if (fi.name().startsWith(VIRTUAL_FILE_PREFIX)) {
+            return VirtualFileSnapshotIndexInput.builder()
                 .fileInfo(fileInfoMap.get(name))
                 .fileBuilder(
                     new VirtualFileIndexInput.RemoteFileBuilder(name, fileInfoMap.get(name).length(), fileInfoMap.get(name).length())
@@ -79,7 +81,7 @@ public class RemoteSnapshotDirectory extends Directory {
                 )
                 .build();
         }
-        return new BlockedSnapshotIndexInput(fi, fsDirectory, blobContainer);
+        return new BlockedSnapshotIndexInput(fi, fsDirectory, blobContainer, transferManager);
     }
 
     @Override

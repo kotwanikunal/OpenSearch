@@ -18,15 +18,17 @@ import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot;
+import org.opensearch.index.store.remote.util.TransferManager;
 import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.blobstore.BlobStoreRepository;
 import org.opensearch.snapshots.SnapshotId;
+import org.opensearch.threadpool.ThreadPool;
 
 public class RemoteSnapshotDirectoryFactory {
 
     public static final String REMOTE_STORE_LOCATION = "RemoteStore";
 
-    public Directory newDirectory(IndexSettings indexSettings, ShardPath path, Repository repository) throws IOException {
+    public Directory newDirectory(IndexSettings indexSettings, ShardPath path, Repository repository, ThreadPool threadPool) throws IOException {
         assert repository instanceof BlobStoreRepository : "repository should be instance of BlobStoreRepository";
         final BlobStoreRepository blobStoreRepository = (BlobStoreRepository) repository;
         final BlobPath blobPath = new BlobPath().add("indices")
@@ -41,7 +43,9 @@ public class RemoteSnapshotDirectoryFactory {
         final BlobStoreIndexShardSnapshot snapshot = blobStoreRepository.loadShardSnapshot(blobContainer, snapshotId);
         FSDirectory fsDirectory = FSDirectory.open(shardActualPath);
 
-        return new RemoteSnapshotDirectory(blobContainer, snapshot, fsDirectory);
+        TransferManager transferManager = new TransferManager(blobContainer, threadPool);
+
+        return new RemoteSnapshotDirectory(blobContainer, snapshot, fsDirectory, transferManager);
 
     }
 }

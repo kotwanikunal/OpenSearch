@@ -534,7 +534,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     final Repository repository = repositoriesService.repository(
                         IndexSettings.SNAPSHOT_REPOSITORY.get(this.indexSettings.getSettings())
                     );
-                    directory = new RemoteSnapshotDirectoryFactory().newDirectory(this.indexSettings, path, repository);
+                    directory = new RemoteSnapshotDirectoryFactory().newDirectory(this.indexSettings, path, repository, threadPool);
                 } catch (RepositoryMissingException e) {
                     throw new IllegalArgumentException(
                         "Repository should be created before creating index with remote_store enabled setting",

@@ -107,6 +107,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         public static final String FETCH_SHARD_STORE = "fetch_shard_store";
         public static final String SYSTEM_READ = "system_read";
         public static final String SYSTEM_WRITE = "system_write";
+
+
+        public static final String REMOTE_STORE = "remote_store";
     }
 
     /**
@@ -165,6 +168,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         map.put(Names.REFRESH, ThreadPoolType.SCALING);
         map.put(Names.WARMER, ThreadPoolType.SCALING);
         map.put(Names.SNAPSHOT, ThreadPoolType.SCALING);
+        map.put(Names.REMOTE_STORE, ThreadPoolType.SCALING);
         map.put(Names.FORCE_MERGE, ThreadPoolType.FIXED);
         map.put(Names.FETCH_SHARD_STARTED, ThreadPoolType.SCALING);
         map.put(Names.FETCH_SHARD_STORE, ThreadPoolType.SCALING);
@@ -221,6 +225,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         builders.put(Names.REFRESH, new ScalingExecutorBuilder(Names.REFRESH, 1, halfProcMaxAt10, TimeValue.timeValueMinutes(5)));
         builders.put(Names.WARMER, new ScalingExecutorBuilder(Names.WARMER, 1, halfProcMaxAt5, TimeValue.timeValueMinutes(5)));
         builders.put(Names.SNAPSHOT, new ScalingExecutorBuilder(Names.SNAPSHOT, 1, halfProcMaxAt5, TimeValue.timeValueMinutes(5)));
+        builders.put(Names.REMOTE_STORE, new ScalingExecutorBuilder(Names.REMOTE_STORE, 1, halfProcMaxAt5, TimeValue.timeValueMinutes(5)));
         builders.put(
             Names.FETCH_SHARD_STARTED,
             new ScalingExecutorBuilder(Names.FETCH_SHARD_STARTED, 1, 2 * allocatedProcessors, TimeValue.timeValueMinutes(5))

@@ -15,6 +15,7 @@ import org.apache.lucene.store.RandomAccessInput;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -24,8 +25,6 @@ import java.util.concurrent.atomic.AtomicReference;
  * Class acts as a virtual file mechanism for the accessed files and only downloads the file only when its read.
  */
 public abstract class VirtualFileIndexInput extends IndexInput implements RandomAccessInput {
-
-    protected static final Map<String, IndexInput> EXISTING_FILES = new HashMap<>();
 
     /**
      * start offset of the file : non-zero index input the slice case
@@ -196,19 +195,17 @@ public abstract class VirtualFileIndexInput extends IndexInput implements Random
     private void ensureDownloaded() throws IOException {
         if (currentInput != null) return;
 
-        // TODO: This mechanism is not scalable. It will need a better mechanism to detect already fetched blocks.
-        if (EXISTING_FILES.containsKey(fileName)) {
-            currentInput = EXISTING_FILES.get(fileName).clone();
-            currentInputHolder.set(currentInput);
-        } else {
-            final Path filePath = directory.getDirectory().resolve(fileName);
-            downloadTo(filePath);
-            IndexInput luceneIndexInput = directory.openInput(fileName, IOContext.READ);
+        final Path filePath = directory.getDirectory().resolve(fileName);
 
-            currentInput = luceneIndexInput.clone();
-            currentInputHolder.set(currentInput);
-            EXISTING_FILES.put(fileName, luceneIndexInput);
+        // TODO: Replace this mechanism with cache check
+        if (Files.notExists(filePath)) {
+            downloadTo(filePath);
         }
+
+        IndexInput luceneIndexInput = directory.openInput(fileName, IOContext.READ);
+        currentInput = luceneIndexInput.clone();
+        currentInputHolder.set(currentInput);
+
     }
 
     public abstract void downloadTo(final Path filePath) throws IOException;

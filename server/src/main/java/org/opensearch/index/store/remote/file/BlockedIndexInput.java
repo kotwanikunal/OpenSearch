@@ -12,9 +12,12 @@ import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.RandomAccessInput;
+import org.opensearch.action.ActionRunnable;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot;
 import org.opensearch.index.store.remote.directory.RemoteSnapshotDirectory;
+import org.opensearch.index.store.remote.util.TransferManager;
+import org.opensearch.threadpool.ThreadPool;
 
 import java.io.BufferedOutputStream;
 import java.io.EOFException;
@@ -25,6 +28,10 @@ import java.io.OutputStream;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -100,12 +107,14 @@ abstract class BlockedIndexInput extends IndexInput implements RandomAccessInput
 
     protected final long partSize;
 
+    protected final TransferManager transferManager;
+
     /**
      * FileInfo contains snapshot metadata references for this IndexInput
      */
     protected final BlobStoreIndexShardSnapshot.FileInfo fileInfo;
 
-    public BlockedIndexInput(BlobStoreIndexShardSnapshot.FileInfo fileInfo, FSDirectory directory, BlobContainer blobContainer) {
+    public BlockedIndexInput(BlobStoreIndexShardSnapshot.FileInfo fileInfo, FSDirectory directory, BlobContainer blobContainer, TransferManager transferManager) {
         this(
             "BlockedIndexInput(path=\"" + directory.getDirectory().toString() + "/" + fileInfo.physicalName() + "\")",
             fileInfo,
@@ -113,7 +122,8 @@ abstract class BlockedIndexInput extends IndexInput implements RandomAccessInput
             fileInfo.length(),
             false,
             directory,
-            blobContainer
+            blobContainer,
+            transferManager
         );
     }
 
@@ -124,7 +134,8 @@ abstract class BlockedIndexInput extends IndexInput implements RandomAccessInput
         long length,
         boolean isClone,
         FSDirectory directory,
-        BlobContainer blobContainer
+        BlobContainer blobContainer,
+        TransferManager transferManager
     ) {
         super(resourceDescription);
         this.fileInfo = fileInfo;
@@ -139,6 +150,7 @@ abstract class BlockedIndexInput extends IndexInput implements RandomAccessInput
         this.blockSize = 1 << blockSizeShift;
         this.blockMask = blockSize - 1;
         this.blobContainer = blobContainer;
+        this.transferManager = transferManager;
     }
 
     @Override
@@ -398,43 +410,30 @@ abstract class BlockedIndexInput extends IndexInput implements RandomAccessInput
             currentBlock.close();
         }
 
-        IndexInput indexInput = downloadBlock(blockId);
-        currentBlock = indexInput.clone();
-        currentBlockId = blockId;
-        currentBlockHolder.set(currentBlock);
-
+        Future<IndexInput> indexInputAsync = downloadBlockAsync(blockId);
+        try {
+            currentBlock = indexInputAsync.get();
+            currentBlockId = blockId;
+            currentBlockHolder.set(currentBlock);
+        } catch (InterruptedException | ExecutionException e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    private IndexInput downloadBlock(int blockId) throws IOException {
+    private Future<IndexInput> downloadBlockAsync(int blockId) throws IOException {
         final String blockFileName = fileName + "." + blockId;
-        final Path blockPath = directory.getDirectory().resolve(blockFileName);
 
-        final IndexInput input;
+        final long blockStart = getBlockStart(blockId);
+        final long blockEnd = blockStart + getActualBlockSize(blockId);
+        final int part = (int) (blockStart / partSize);
+        final long partStart = part * partSize;
 
-        // TODO: This mechanism is not scalable. It will need a better mechanism to detect already fetched blocks.
-        if (!RemoteSnapshotDirectory.EXISTING_BLOCKS.containsKey(blockFileName)) {
-            final long blockStart = getBlockStart(blockId);
-            final long blockEnd = blockStart + getActualBlockSize(blockId);
-            final int part = (int) (blockStart / partSize);
-            final long partStart = part * partSize;
+        final long position = blockStart - partStart;
+        final long offset = blockEnd - blockStart - partStart;
 
-            try (
-                InputStream snapshotFileInputStream = blobContainer.readBlob(
-                    fileInfo.partName(part),
-                    blockStart - partStart,
-                    blockEnd - blockStart - partStart
-                );
-                OutputStream localFileOutputStream = new BufferedOutputStream(new FileOutputStream(blockPath.toFile()));
-            ) {
-                localFileOutputStream.write(snapshotFileInputStream.readAllBytes());
-            }
-
-            input = directory.openInput(blockFileName, IOContext.READ);
-            EXISTING_BLOCKS.put(blockFileName, input);
-        } else {
-            input = EXISTING_BLOCKS.get(blockFileName);
-        }
-        return input;
+        TransferManager.DownloadRequest downloadRequest = new TransferManager.DownloadRequest(position, offset,
+            fileInfo.partName(part), directory, blockFileName);
+        return transferManager.download(downloadRequest);
     }
 
     protected int getBlock(long pos) {
