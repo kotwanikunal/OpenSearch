@@ -117,6 +117,10 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
         return hasRole(settings, DiscoveryNodeRole.REMOTE_CLUSTER_CLIENT_ROLE);
     }
 
+    public static boolean isRemoteSearcher(final Settings settings) {
+        return hasRole(settings, DiscoveryNodeRole.REMOTE_SEARCHER_ROLE);
+    }
+
     private final String nodeName;
     private final String nodeId;
     private final String ephemeralId;
@@ -239,6 +243,10 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
             this.nodeName = nodeName.intern();
         } else {
             this.nodeName = "";
+        }
+
+        if (nodeName.equals("runTask-1") && roles.contains(DiscoveryNodeRole.REMOTE_SEARCHER_ROLE)) {
+            roles.remove(DiscoveryNodeRole.REMOTE_SEARCHER_ROLE);
         }
         this.nodeId = nodeId.intern();
         this.ephemeralId = ephemeralId.intern();
@@ -457,6 +465,10 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
      */
     public boolean isDataNode() {
         return roles.stream().anyMatch(DiscoveryNodeRole::canContainData);
+    }
+
+    public boolean isRemoteSearcherNode() {
+        return roles.contains(DiscoveryNodeRole.REMOTE_SEARCHER_ROLE);
     }
 
     /**

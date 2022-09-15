@@ -218,6 +218,20 @@ public abstract class DiscoveryNodeRole implements Comparable<DiscoveryNodeRole>
     };
 
     /**
+     * Represents the role for an ingest node.
+     */
+    public static final DiscoveryNodeRole REMOTE_SEARCHER_ROLE = new DiscoveryNodeRole("remote_searcher", "s") {
+
+        // TODO: Confirm this is the right location and approach
+        @Override
+        public Setting<Boolean> legacySetting() {
+            // copy the setting here so we can mark it private in org.opensearch.node.Node
+            return Setting.boolSetting("node.remote_searcher", true, Property.Deprecated, Property.NodeScope);
+        }
+
+    };
+
+    /**
      * Represents the role for a cluster-manager-eligible node.
      * @deprecated As of 2.0, because promoting inclusive language, replaced by {@link #CLUSTER_MANAGER_ROLE}
      */
@@ -294,7 +308,7 @@ public abstract class DiscoveryNodeRole implements Comparable<DiscoveryNodeRole>
      * The built-in node roles.
      */
     public static SortedSet<DiscoveryNodeRole> BUILT_IN_ROLES = Collections.unmodifiableSortedSet(
-        new TreeSet<>(Arrays.asList(DATA_ROLE, INGEST_ROLE, CLUSTER_MANAGER_ROLE, REMOTE_CLUSTER_CLIENT_ROLE))
+        new TreeSet<>(Arrays.asList(DATA_ROLE, INGEST_ROLE, CLUSTER_MANAGER_ROLE, REMOTE_CLUSTER_CLIENT_ROLE, REMOTE_SEARCHER_ROLE))
     );
 
     /**

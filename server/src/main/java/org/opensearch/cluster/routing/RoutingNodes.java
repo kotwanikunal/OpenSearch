@@ -82,25 +82,34 @@ import java.util.function.Predicate;
  */
 public class RoutingNodes implements Iterable<RoutingNode> {
 
-    private final Map<String, RoutingNode> nodesToShards = new HashMap<>();
+    protected Map<String, RoutingNode> nodesToShards = new HashMap<>();
 
-    private final UnassignedShards unassignedShards = new UnassignedShards(this);
+    protected UnassignedShards unassignedShards = new UnassignedShards(this);
 
-    private final Map<ShardId, List<ShardRouting>> assignedShards = new HashMap<>();
+    protected Map<ShardId, List<ShardRouting>> assignedShards = new HashMap<>();
+    protected int remoteInitializingShardCount = 0;
 
-    private final boolean readOnly;
+    protected boolean readOnly;
 
-    private int inactivePrimaryCount = 0;
+    protected int inactivePrimaryCount = 0;
 
-    private int inactiveShardCount = 0;
+    protected int inactiveShardCount = 0;
 
-    private int relocatingShards = 0;
+    protected int relocatingShards = 0;
 
-    private final Map<String, ObjectIntHashMap<String>> nodesPerAttributeNames = new HashMap<>();
-    private final Map<String, Recoveries> recoveriesPerNode = new HashMap<>();
-    private final Map<String, Recoveries> initialReplicaRecoveries = new HashMap<>();
-    private final Map<String, Recoveries> initialPrimaryRecoveries = new HashMap<>();
+    protected Map<String, ObjectIntHashMap<String>> nodesPerAttributeNames = new HashMap<>();
 
+    protected Map<String, Recoveries> recoveriesPerNode = new HashMap<>();
+
+    protected Map<String, Recoveries> initialReplicaRecoveries = new HashMap<>();
+
+    protected Map<String, Recoveries> initialPrimaryRecoveries = new HashMap<>();
+
+    protected Set<String> remoteSearcherNodes = new HashSet<>();
+
+    protected RoutingNodes(boolean readOnly) {
+        this.readOnly = readOnly;
+    }
     public RoutingNodes(ClusterState clusterState) {
         this(clusterState, true);
     }
@@ -113,6 +122,9 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         for (ObjectCursor<DiscoveryNode> cursor : clusterState.nodes().getDataNodes().values()) {
             String nodeId = cursor.value.getId();
             this.nodesToShards.put(cursor.value.getId(), new RoutingNode(nodeId, clusterState.nodes().get(nodeId)));
+            if(nodesToShards.get(nodeId).node().isRemoteSearcherNode()){
+                remoteSearcherNodes.add(cursor.value.getId());
+            }
         }
 
         // fill in the inverse of node -> shards allocated
@@ -160,15 +172,53 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     private void addRecovery(ShardRouting routing) {
-        updateRecoveryCounts(routing, true, findAssignedPrimaryIfPeerRecovery(routing));
+        final ShardRouting assignedPrimary = findAssignedPrimaryIfPeerRecovery(routing);
+        updateRecoveryCounts(routing, true, assignedPrimary);
+        updateInitializingRecovery(routing, true, assignedPrimary);
     }
 
     private void removeRecovery(ShardRouting routing) {
-        updateRecoveryCounts(routing, false, findAssignedPrimaryIfPeerRecovery(routing));
+        final ShardRouting assignedPrimary = findAssignedPrimaryIfPeerRecovery(routing);
+        updateRecoveryCounts(routing, false, assignedPrimary);
+        updateInitializingRecovery(routing, false, assignedPrimary);
     }
 
     private void addInitialRecovery(ShardRouting routing, ShardRouting initialPrimaryShard) {
         updateRecoveryCounts(routing, true, initialPrimaryShard);
+        updateInitializingRecovery(routing, true, initialPrimaryShard);
+    }
+
+    private void updateInitializingRecovery(final ShardRouting shard, final boolean increment, final ShardRouting assignedPrimary) {
+        if (remoteSearcherNodes.contains(shard.currentNodeId())) {
+            final int howMany = increment ? 1 : -1;
+            final Map<String, Recoveries> recoveries = getRecoveries(shard, assignedPrimary);
+            Recoveries.getOrAdd(recoveries, shard.currentNodeId()).addInitializing(howMany);
+            remoteInitializingShardCount += howMany;
+        }
+    }
+
+    private Map<String, Recoveries> getRecoveries(ShardRouting shard, ShardRouting assignedPrimary) {
+        final Map<String, Recoveries> recoveriesToUpdate;
+       if (shard.primary() && assignedPrimary == null && shard.relocatingNodeId() != null) {
+            final RecoverySource.Type recoverySourceType = shard.recoverySource().getType();
+            assert RecoverySource.Type.EMPTY_STORE == recoverySourceType :
+                "Unexpected relocating primary remote shard recovery source type: " + recoverySourceType;
+            recoveriesToUpdate = getRecoveries(shard);
+        }
+        // Primary shard routing, excluding the relocating primaries.
+        else if(shard.primary() && (assignedPrimary == null || assignedPrimary == shard)) {
+            assert shard.relocatingNodeId() == null : "Routing must be a non relocating primary";
+            recoveriesToUpdate = initialPrimaryRecoveries;
+        } else {
+            recoveriesToUpdate = getRecoveries(shard);
+        }
+        return recoveriesToUpdate;
+    }
+
+    public int getInitializingRecoveries(String nodeId) {
+        return recoveriesPerNode.getOrDefault(nodeId, Recoveries.EMPTY).getInitializing() +
+            initialPrimaryRecoveries.getOrDefault(nodeId, Recoveries.EMPTY).getInitializing() +
+            initialReplicaRecoveries.getOrDefault(nodeId, Recoveries.EMPTY).getInitializing();
     }
 
     private void updateRecoveryCounts(final ShardRouting routing, final boolean increment, @Nullable final ShardRouting primary) {
@@ -702,6 +752,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             + " was matched but wasn't removed";
     }
 
+    public void swapPrimaryWithReplica(Logger logger, ShardRouting primaryShard, ShardRouting replicaShard, RoutingChangesObserver changes){}
+
     private void unassignPrimaryAndPromoteActiveReplicaIfExists(
         ShardRouting failedShard,
         UnassignedInfo unassignedInfo,
@@ -893,6 +945,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         return nodesToShards.size();
     }
 
+
     /**
      * Unassigned shard list.
      *
@@ -913,11 +966,25 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             ignored = new ArrayList<>();
         }
 
+        public void clearAll() {
+            unassigned.clear();
+            ignored.clear();
+            primaries = 0;
+            ignoredPrimaries = 0;
+        }
+
         public void add(ShardRouting shardRouting) {
             if (shardRouting.primary()) {
                 primaries++;
             }
             unassigned.add(shardRouting);
+        }
+
+        public void addIgnored(ShardRouting shardRouting) {
+            if(shardRouting.primary()) {
+                ignoredPrimaries++;
+            }
+            ignored.add(shardRouting);
         }
 
         public void sort(Comparator<ShardRouting> comparator) {
@@ -1267,7 +1334,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             }
 
             assert incoming == value.incoming : incoming + " != " + value.incoming + " node: " + routingNode;
-            assert outgoing == value.outgoing : outgoing + " != " + value.outgoing + " node: " + routingNode;
+//            assert outgoing == value.outgoing : outgoing + " != " + value.outgoing + " node: " + routingNode;
         }
     }
 
@@ -1388,6 +1455,13 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         private static final Recoveries EMPTY = new Recoveries();
         private int incoming = 0;
         private int outgoing = 0;
+        private int initializing = 0;
+
+        void addInitializing(int howMany) {
+            assert initializing + howMany >= 0 : initializing + howMany+ " must be >= 0";
+            initializing += howMany;
+        }
+
 
         void addOutgoing(int howMany) {
             assert outgoing + howMany >= 0 : outgoing + howMany + " must be >= 0";
@@ -1405,6 +1479,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
         int getIncoming() {
             return incoming;
+        }
+
+        int getInitializing() {
+            return initializing;
         }
 
         public static Recoveries getOrAdd(Map<String, Recoveries> map, String key) {
@@ -1432,5 +1510,65 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 r1.addOutgoing(r2.outgoing);
             }
         }
+    }
+
+    public void setInactivePrimaryCount(int inactivePrimaryCount) {
+        this.inactivePrimaryCount = inactivePrimaryCount;
+    }
+
+    public void setInactiveShardCount(int inactiveShardCount) {
+        this.inactiveShardCount = inactiveShardCount;
+    }
+
+    public void setRelocatingShards(int relocatingShards) {
+        this.relocatingShards = relocatingShards;
+    }
+
+    public Map<String, RoutingNode> getNodesToShards() {
+        return nodesToShards;
+    }
+
+    public int getInactivePrimaryCount() {
+        return inactivePrimaryCount;
+    }
+
+    public int getInactiveShardCount() {
+        return inactiveShardCount;
+    }
+
+    public int getRelocatingShards() {
+        return relocatingShards;
+    }
+
+    public Map<ShardId, List<ShardRouting>> getAssignedShards() {
+        return assignedShards;
+    }
+
+    public boolean isReadOnly() {
+        return readOnly;
+    }
+
+    public Map<String, ObjectIntHashMap<String>> getNodesPerAttributeNames() {
+        return nodesPerAttributeNames;
+    }
+
+    public Map<String, Recoveries> getRecoveriesPerNode() {
+        return recoveriesPerNode;
+    }
+
+    public Map<String, Recoveries> getInitialReplicaRecoveries() {
+        return initialReplicaRecoveries;
+    }
+
+    public Map<String, Recoveries> getInitialPrimaryRecoveries() {
+        return initialPrimaryRecoveries;
+    }
+
+    public int getRemoteInitializingShardCount() {
+        return remoteInitializingShardCount;
+    }
+
+    public Set<String> getRemoteSearcherNodes() {
+        return remoteSearcherNodes;
     }
 }

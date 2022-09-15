@@ -40,6 +40,7 @@ import org.opensearch.cluster.ClusterInfo;
 import org.opensearch.cluster.DiskUsage;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.Metadata;
+import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.IndexShardRoutingTable;
 import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.RoutingNode;
@@ -55,6 +56,7 @@ import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.ByteSizeValue;
 import org.opensearch.index.Index;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardId;
 import org.opensearch.snapshots.SnapshotShardSizeInfo;
 
@@ -167,6 +169,11 @@ public class DiskThresholdDecider extends AllocationDecider {
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        IndexMetadata metadata = allocation.metadata().getIndexSafe(shardRouting.index());
+        if (node.node().isRemoteSearcherNode() && IndexSettings.SNAPSHOT_REPOSITORY.exists(metadata.getSettings())) {
+            return Decision.ALWAYS;
+        }
+
         ClusterInfo clusterInfo = allocation.clusterInfo();
         ImmutableOpenMap<String, DiskUsage> usages = clusterInfo.getNodeMostAvailableDiskUsages();
         final Decision decision = earlyTerminate(allocation, usages);
@@ -420,6 +427,11 @@ public class DiskThresholdDecider extends AllocationDecider {
 
     @Override
     public Decision canRemain(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        IndexMetadata metadata = allocation.metadata().getIndexSafe(shardRouting.index());
+        if (node.node().isRemoteSearcherNode() && IndexSettings.SNAPSHOT_REPOSITORY.exists(metadata.getSettings())) {
+            return Decision.ALWAYS;
+        }
+
         if (shardRouting.currentNodeId().equals(node.nodeId()) == false) {
             throw new IllegalArgumentException("Shard [" + shardRouting + "] is not allocated on node: [" + node.nodeId() + "]");
         }

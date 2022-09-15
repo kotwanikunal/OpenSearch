@@ -79,7 +79,7 @@ public class RoutingAllocation {
 
     private final ClusterInfo clusterInfo;
 
-    private final SnapshotShardSizeInfo shardSizeInfo;
+    private SnapshotShardSizeInfo shardSizeInfo;
 
     private Map<ShardId, Set<String>> ignoredShardToNodes = null;
 
@@ -91,10 +91,10 @@ public class RoutingAllocation {
 
     private final long currentNanoTime;
 
-    private final IndexMetadataUpdater indexMetadataUpdater = new IndexMetadataUpdater();
-    private final RoutingNodesChangedObserver nodesChangedObserver = new RoutingNodesChangedObserver();
-    private final RestoreInProgressUpdater restoreInProgressUpdater = new RestoreInProgressUpdater();
-    private final RoutingChangesObserver routingChangesObserver = new RoutingChangesObserver.DelegatingRoutingChangesObserver(
+    private IndexMetadataUpdater indexMetadataUpdater = new IndexMetadataUpdater();
+    private RoutingNodesChangedObserver nodesChangedObserver = new RoutingNodesChangedObserver();
+    private RestoreInProgressUpdater restoreInProgressUpdater = new RestoreInProgressUpdater();
+    private RoutingChangesObserver routingChangesObserver = new RoutingChangesObserver.DelegatingRoutingChangesObserver(
         nodesChangedObserver,
         indexMetadataUpdater,
         restoreInProgressUpdater
@@ -124,6 +124,21 @@ public class RoutingAllocation {
         this.clusterInfo = clusterInfo;
         this.shardSizeInfo = shardSizeInfo;
         this.currentNanoTime = currentNanoTime;
+    }
+
+    public RoutingAllocation(RoutingAllocation other, RoutingNodes routingNodes) {
+        this.deciders = other.deciders();
+        this.routingNodes = routingNodes;
+        this.metadata = other.metadata();
+        this.routingTable = other.routingTable();
+        this.nodes = other.nodes();
+        this.customs = other.getCustoms();
+        this.clusterInfo = other.clusterInfo();
+        this.currentNanoTime = other.getCurrentNanoTime();
+        this.indexMetadataUpdater = other.getIndexMetadataUpdater();
+        this.nodesChangedObserver = other.getNodesChangedObserver();
+        this.restoreInProgressUpdater = other.getRestoreInProgressUpdater();
+        this.routingChangesObserver = other.getRoutingChangesObserver();
     }
 
     /** returns the nano time captured at the beginning of the allocation. used to make sure all time based decisions are aligned */
@@ -335,4 +350,21 @@ public class RoutingAllocation {
          */
         EXCLUDE_YES_DECISIONS
     }
+
+    public IndexMetadataUpdater getIndexMetadataUpdater() {
+        return indexMetadataUpdater;
+    }
+
+    public RoutingNodesChangedObserver getNodesChangedObserver() {
+        return nodesChangedObserver;
+    }
+
+    public RestoreInProgressUpdater getRestoreInProgressUpdater() {
+        return restoreInProgressUpdater;
+    }
+
+    public RoutingChangesObserver getRoutingChangesObserver() {
+        return routingChangesObserver;
+    }
+
 }

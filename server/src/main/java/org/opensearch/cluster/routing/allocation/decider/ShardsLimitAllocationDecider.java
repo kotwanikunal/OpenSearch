@@ -41,6 +41,7 @@ import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.index.IndexSettings;
 
 import java.util.function.BiPredicate;
 
@@ -110,13 +111,39 @@ public class ShardsLimitAllocationDecider extends AllocationDecider {
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        IndexMetadata metadata = allocation.metadata().getIndexSafe(shardRouting.index());
+        if (node.node().isRemoteSearcherNode() && IndexSettings.SNAPSHOT_REPOSITORY.exists(metadata.getSettings())) {
+            return Decision.ALWAYS;
+        }
+
         return doDecide(shardRouting, node, allocation, (count, limit) -> count >= limit);
     }
 
     @Override
     public Decision canRemain(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        IndexMetadata metadata = allocation.metadata().getIndexSafe(shardRouting.index());
+        if (node.node().isRemoteSearcherNode() && IndexSettings.SNAPSHOT_REPOSITORY.exists(metadata.getSettings())) {
+            return Decision.ALWAYS;
+        }
+
         return doDecide(shardRouting, node, allocation, (count, limit) -> count > limit);
 
+    }
+
+    @Override
+    public Decision canAllocate(IndexMetadata indexMetadata, RoutingNode node, RoutingAllocation allocation) {
+        if (node.node().isRemoteSearcherNode() && IndexSettings.SNAPSHOT_REPOSITORY.exists(indexMetadata.getSettings())) {
+            return Decision.ALWAYS;
+        }
+        return super.canAllocate(indexMetadata, node, allocation);
+    }
+
+    @Override
+    public Decision canAllocate(RoutingNode node, RoutingAllocation allocation) {
+        if (node.node().isRemoteSearcherNode()) {
+            return Decision.ALWAYS;
+        }
+        return super.canAllocate(node, allocation);
     }
 
     private Decision doDecide(
