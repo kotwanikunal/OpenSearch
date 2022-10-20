@@ -126,22 +126,6 @@ public class RoutingAllocation {
         this.currentNanoTime = currentNanoTime;
     }
 
-//    public RoutingAllocation(RoutingAllocation other, RoutingNodes routingNodes) {
-//        this.deciders = other.deciders();
-//        this.routingNodes = routingNodes;
-//        this.metadata = other.metadata();
-//        this.routingTable = other.routingTable();
-//        this.nodes = other.nodes();
-//        this.customs = other.getCustoms();
-//        this.clusterInfo = other.clusterInfo();
-//        this.currentNanoTime = other.getCurrentNanoTime();
-//        this.indexMetadataUpdater = other.getIndexMetadataUpdater();
-//        this.nodesChangedObserver = other.getNodesChangedObserver();
-//        this.restoreInProgressUpdater = other.getRestoreInProgressUpdater();
-//        this.routingChangesObserver = other.getRoutingChangesObserver();
-//        this.shardSizeInfo = other.shardSizeInfo;
-//    }
-
     /** returns the nano time captured at the beginning of the allocation. used to make sure all time based decisions are aligned */
     public long getCurrentNanoTime() {
         return currentNanoTime;
@@ -351,21 +335,4 @@ public class RoutingAllocation {
          */
         EXCLUDE_YES_DECISIONS
     }
-
-//    public IndexMetadataUpdater getIndexMetadataUpdater() {
-//        return indexMetadataUpdater;
-//    }
-//
-//    public RoutingNodesChangedObserver getNodesChangedObserver() {
-//        return nodesChangedObserver;
-//    }
-//
-//    public RestoreInProgressUpdater getRestoreInProgressUpdater() {
-//        return restoreInProgressUpdater;
-//    }
-//
-//    public RoutingChangesObserver getRoutingChangesObserver() {
-//        return routingChangesObserver;
-//    }
-
 }
