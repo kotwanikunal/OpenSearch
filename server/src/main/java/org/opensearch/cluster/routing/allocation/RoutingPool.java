@@ -12,6 +12,8 @@ import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.RoutingNode;
 import org.opensearch.cluster.routing.ShardRouting;
+import org.opensearch.common.settings.Settings;
+import org.opensearch.index.IndexModule;
 import org.opensearch.index.IndexSettings;
 
 public enum RoutingPool {
@@ -19,10 +21,7 @@ public enum RoutingPool {
     REMOTE_CAPABLE;
 
     public static RoutingPool getNodePool(RoutingNode node) {
-        if (node.node().isRemoteSearcherNode()) {
-            return REMOTE_CAPABLE;
-        }
-        return LOCAL_ONLY;
+        return getNodePool(node.node());
     }
 
     public static RoutingPool getNodePool(DiscoveryNode node) {
@@ -34,14 +33,12 @@ public enum RoutingPool {
 
     public static RoutingPool getShardPool(ShardRouting shard, RoutingAllocation allocation) {
         IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shard.index());
-        if (IndexSettings.SNAPSHOT_REPOSITORY.exists(indexMetadata.getSettings())) {
-            return REMOTE_CAPABLE;
-        }
-        return LOCAL_ONLY;
+       return getIndexPool(indexMetadata);
     }
 
     public static RoutingPool getIndexPool(IndexMetadata indexMetadata) {
-        if (IndexSettings.SNAPSHOT_REPOSITORY.exists(indexMetadata.getSettings())) {
+        Settings indexSettings = indexMetadata.getSettings();
+        if (IndexModule.Type.REMOTE_SNAPSHOT.match(indexSettings.get(IndexModule.INDEX_STORE_TYPE_SETTING.getKey()))) {
             return REMOTE_CAPABLE;
         }
         return LOCAL_ONLY;

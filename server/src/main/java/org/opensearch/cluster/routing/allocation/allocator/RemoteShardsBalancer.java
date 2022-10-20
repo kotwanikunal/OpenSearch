@@ -15,6 +15,7 @@ import org.opensearch.cluster.routing.RoutingNodes;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.routing.UnassignedInfo;
 import org.opensearch.cluster.routing.allocation.RoutingAllocation;
+import org.opensearch.cluster.routing.allocation.RoutingPool;
 import org.opensearch.cluster.routing.allocation.decider.Decision;
 import org.opensearch.cluster.routing.allocation.decider.DiskThresholdDecider;
 import org.opensearch.common.Randomness;
@@ -95,7 +96,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
                     continue;
                 }
 
-                if (!shard.index().getName().startsWith("restored_")) {
+                if (!RoutingPool.REMOTE_CAPABLE.equals(RoutingPool.getShardPool(shard, allocation))) {
                     continue;
                 }
 
@@ -148,9 +149,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         List<RoutingNode> nodeList = new ArrayList<>();
         while (nodesIter.hasNext()) {
             RoutingNode rNode = nodesIter.next();
-//            if (!isShadowNode(rNode)) {
-                nodeList.add(rNode);
-//            }
+            nodeList.add(rNode);
         }
         logger.trace("Performing balancing for remote shards.");
 
@@ -166,7 +165,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         for (RoutingNode node: nodeList) {
             int totalPrimaryPerNode = 0;
             for (ShardRouting shard: node) {
-                if (shard.index().getName().startsWith("restored_") &&
+                if (RoutingPool.REMOTE_CAPABLE.equals(RoutingPool.getShardPool(shard, allocation)) &&
                     shard.primary() && (shard.initializing() || shard.started())) {
                     totalPrimaryShard++;
                     totalPrimaryPerNode++;
@@ -201,7 +200,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         HashMap<String, UnassignedIndexShards> unassignedShardMap = new HashMap<>();
         for (ShardRouting shard: routingNodes.unassigned().drain()) {
             String index = shard.getIndexName();
-            if (!index.startsWith("restored_")) {
+            if (!RoutingPool.REMOTE_CAPABLE.equals(RoutingPool.getShardPool(shard, allocation))) {
                 routingNodes.unassigned().add(shard);
             }
             if (!unassignedShardMap.containsKey(index)) {
@@ -334,7 +333,8 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         while (shardsToBalance > 0 && shardIterator.hasNext() && !targetNodes.isEmpty()) {
             // Find an active primary shard to relocate
             ShardRouting shard = shardIterator.next();
-            if (!shard.started() || !shard.primary() || !shard.index().getName().startsWith("restored_")) {
+            if (!shard.started() || !shard.primary() ||
+                !RoutingPool.REMOTE_CAPABLE.equals(RoutingPool.getShardPool(shard, allocation))) {
                 continue;
             }
 
