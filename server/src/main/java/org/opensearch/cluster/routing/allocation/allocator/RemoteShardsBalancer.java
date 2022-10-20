@@ -42,7 +42,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
     }
 
     public void allocateUnassigned() {
-        if (routingNodes.unassigned().isEmpty()) {
+            if (routingNodes.unassigned().isEmpty()) {
             logger.debug("No unassigned remote shards found.");
             return;
         }
@@ -92,6 +92,10 @@ public class RemoteShardsBalancer implements ShardsBalancer {
             RoutingNode sourceNode = excludedNodes.poll();
             for (ShardRouting shard : sourceNode) {
                 if (shard.started() == false) {
+                    continue;
+                }
+
+                if (!shard.index().getName().startsWith("restored_")) {
                     continue;
                 }
 
@@ -162,7 +166,8 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         for (RoutingNode node: nodeList) {
             int totalPrimaryPerNode = 0;
             for (ShardRouting shard: node) {
-                if (shard.primary() && (shard.initializing() || shard.started())) {
+                if (shard.index().getName().startsWith("restored_") &&
+                    shard.primary() && (shard.initializing() || shard.started())) {
                     totalPrimaryShard++;
                     totalPrimaryPerNode++;
                 }
@@ -192,13 +197,13 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         }
     }
 
-    public Map<String, UnassignedIndexShards> groupUnassignedShardsByIndex() {
-        /* TODO: Change to TreeMap with comparator if we want to retain the index allocation order maintained by classic hot balancer
-         * SIM: https://i.amazon.com/CoreES-114
-         */
+   public Map<String, UnassignedIndexShards> groupUnassignedShardsByIndex() {
         HashMap<String, UnassignedIndexShards> unassignedShardMap = new HashMap<>();
         for (ShardRouting shard: routingNodes.unassigned().drain()) {
             String index = shard.getIndexName();
+            if (!index.startsWith("restored_")) {
+                routingNodes.unassigned().add(shard);
+            }
             if (!unassignedShardMap.containsKey(index)) {
                 unassignedShardMap.put(index, new UnassignedIndexShards());
             }
@@ -329,7 +334,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         while (shardsToBalance > 0 && shardIterator.hasNext() && !targetNodes.isEmpty()) {
             // Find an active primary shard to relocate
             ShardRouting shard = shardIterator.next();
-            if (!shard.started() || !shard.primary()) {
+            if (!shard.started() || !shard.primary() || !shard.index().getName().startsWith("restored_")) {
                 continue;
             }
 

@@ -36,7 +36,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.util.IntroSorter;
 import org.opensearch.cluster.metadata.IndexMetadata;
-import org.opensearch.cluster.routing.PoolScopedRoutingNodes;
 import org.opensearch.cluster.routing.RoutingNode;
 import org.opensearch.cluster.routing.RoutingNodes;
 import org.opensearch.cluster.routing.ShardRouting;
@@ -147,21 +146,26 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             return;
         }
 
-        Map<RoutingPool, PoolScopedRoutingNodes> poolScopedRoutingNodes = splitRoutingNodes(allocation.routingNodes(), allocation);
+//        Map<RoutingPool, PoolScopedRoutingNodes> poolScopedRoutingNodes = splitRoutingNodes(allocation.routingNodes(), allocation);
 
-        final RoutingAllocation localPoolAllocation = new RoutingAllocation(allocation, poolScopedRoutingNodes.get(RoutingPool.LOCAL_ONLY));
-        final LocalShardsBalancerBalancer localShardsBalancerBalancer = new LocalShardsBalancerBalancer(logger, localPoolAllocation, movePrimaryFirst, weightFunction, threshold);
-        localShardsBalancerBalancer.allocateUnassigned();
-        localShardsBalancerBalancer.moveShards();
-        localShardsBalancerBalancer.balance();
+//        final RoutingAllocation localPoolAllocation = new RoutingAllocation(allocation, poolScopedRoutingNodes.get(RoutingPool.LOCAL_ONLY));
+//        final RoutingAllocation localPoolAllocation = new RoutingAllocation(allocation, poolScopedRoutingNodes.get(RoutingPool.LOCAL_ONLY));
+        final LocalShardsBalancer localShardsBalancer = new LocalShardsBalancer(logger, allocation, movePrimaryFirst, weightFunction, threshold);
+//        final LocalShardsBalancer localShardsBalancer = new LocalShardsBalancer(logger, localPoolAllocation, movePrimaryFirst, weightFunction, threshold);
+        localShardsBalancer.allocateUnassigned();
+        localShardsBalancer.moveShards();
+        localShardsBalancer.balance();
 
-        final RoutingAllocation remotePoolAllocation = new RoutingAllocation(allocation, poolScopedRoutingNodes.get(RoutingPool.REMOTE_CAPABLE));
-        final RemoteShardsBalancer remoteShardsBalancer = new RemoteShardsBalancer(logger, remotePoolAllocation);
+//        final RoutingAllocation remotePoolAllocation = new RoutingAllocation(allocation, poolScopedRoutingNodes.get(RoutingPool.REMOTE_CAPABLE));
+        remoteRoutingShards(allocation.routingNodes(), allocation);
+//        final RoutingAllocation remotePoolAllocation = new RoutingAllocation(allocation, poolScopedRoutingNodes.get(RoutingPool.REMOTE_CAPABLE));
+        final RemoteShardsBalancer remoteShardsBalancer = new RemoteShardsBalancer(logger, allocation);
+//        final RemoteShardsBalancer remoteShardsBalancer = new RemoteShardsBalancer(logger, remotePoolAllocation);
         remoteShardsBalancer.allocateUnassigned();
         remoteShardsBalancer.moveShards();
         remoteShardsBalancer.balance();
 
-        reconcilePoolRoutingInformation(poolScopedRoutingNodes, allocation.routingNodes());
+//        reconcilePoolRoutingInformation(poolScopedRoutingNodes, allocation.routingNodes());
     }
 
     @Override
@@ -171,47 +175,19 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             throw new UnsupportedOperationException("Operation not supported for remote shards");
         }
 
-        LocalShardsBalancerBalancer localShardsBalancerBalancer = new LocalShardsBalancerBalancer(logger, allocation, movePrimaryFirst, weightFunction, threshold);
+        LocalShardsBalancer localShardsBalancer = new LocalShardsBalancer(logger, allocation, movePrimaryFirst, weightFunction, threshold);
         AllocateUnassignedDecision allocateUnassignedDecision = AllocateUnassignedDecision.NOT_TAKEN;
         MoveDecision moveDecision = MoveDecision.NOT_TAKEN;
         if (shard.unassigned()) {
-            allocateUnassignedDecision = localShardsBalancerBalancer.decideAllocateUnassigned(shard);
+            allocateUnassignedDecision = localShardsBalancer.decideAllocateUnassigned(shard);
         } else {
-            moveDecision = localShardsBalancerBalancer.decideMove(shard);
+            moveDecision = localShardsBalancer.decideMove(shard);
             if (moveDecision.isDecisionTaken() && moveDecision.canRemain()) {
-                MoveDecision rebalanceDecision = localShardsBalancerBalancer.decideRebalance(shard);
+                MoveDecision rebalanceDecision = localShardsBalancer.decideRebalance(shard);
                 moveDecision = rebalanceDecision.withRemainDecision(moveDecision.getCanRemainDecision());
             }
         }
         return new ShardAllocationDecision(allocateUnassignedDecision, moveDecision);
-    }
-
-    private void reconcilePoolRoutingInformation(Map<RoutingPool, PoolScopedRoutingNodes> poolScopedRoutingNodes, RoutingNodes routingNodes) {
-        routingNodes.unassigned().clearAll();
-        int inactivePrimaryDelta = 0;
-        int inactiveShardDelta = 0;
-        int relocationShardDelta = 0;
-
-        // TODO: This reconciliation is O(#unassigned + #ignored). See if we can optimize
-        for (RoutingPool pool: RoutingPool.values()) {
-            PoolScopedRoutingNodes poolRouting = poolScopedRoutingNodes.get(pool);
-
-            for (ShardRouting shard: poolRouting.unassigned()) {
-                routingNodes.unassigned().add(shard);
-            }
-
-            for (ShardRouting shard: poolRouting.unassigned().ignored()) {
-                routingNodes.unassigned().addIgnored(shard);
-            }
-
-            inactivePrimaryDelta += poolRouting.getInactivePrimaryCount() - routingNodes.getInactivePrimaryCount();
-            inactiveShardDelta += poolRouting.getInactiveShardCount() - routingNodes.getInactiveShardCount();
-            relocationShardDelta += poolRouting.getRelocatingShardCount() - routingNodes.getRelocatingShardCount();
-        }
-
-        routingNodes.setInactivePrimaryCount(routingNodes.getInactivePrimaryCount() + inactivePrimaryDelta);
-        routingNodes.setInactiveShardCount(routingNodes.getInactiveShardCount() + inactiveShardDelta);
-        routingNodes.setRelocatingShards(routingNodes.getRelocatingShardCount() + relocationShardDelta);
     }
 
     private void failAllocationOfNewPrimaries(RoutingAllocation allocation) {
@@ -308,12 +284,12 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             this.constraints = new AllocationConstraints();
         }
 
-        public float weightWithAllocationConstraints(LocalShardsBalancerBalancer balancer, ModelNode node, String index) {
+        public float weightWithAllocationConstraints(LocalShardsBalancer balancer, ModelNode node, String index) {
             float balancerWeight = weight(balancer, node, index);
             return balancerWeight + constraints.weight(balancer, node, index);
         }
 
-        float weight(LocalShardsBalancerBalancer balancer, ModelNode node, String index) {
+        float weight(LocalShardsBalancer balancer, ModelNode node, String index) {
             final float weightShard = node.numShards() - balancer.avgShardsPerNode();
             final float weightIndex = node.numShards(index) - balancer.avgShardsPerNode(index);
             return theta0 * weightShard + theta1 * weightIndex;
@@ -477,10 +453,10 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         final float[] weights;
         private final WeightFunction function;
         private String index;
-        private final LocalShardsBalancerBalancer balancer;
+        private final LocalShardsBalancer balancer;
         private float pivotWeight;
 
-        NodeSorter(ModelNode[] modelNodes, WeightFunction function, LocalShardsBalancerBalancer balancer) {
+        NodeSorter(ModelNode[] modelNodes, WeightFunction function, LocalShardsBalancer balancer) {
             this.function = function;
             this.balancer = balancer;
             this.modelNodes = modelNodes;
@@ -537,41 +513,79 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         }
     }
 
-    public static Map<RoutingPool, PoolScopedRoutingNodes> splitRoutingNodes(RoutingNodes globalRoutingNodes, RoutingAllocation globalAllocation) {
-        Map<RoutingPool, PoolScopedRoutingNodes> poolScopedRoutingNodes = new HashMap<>();
-        for (RoutingPool pool: RoutingPool.values()) {
-            poolScopedRoutingNodes.put(pool, new PoolScopedRoutingNodes(globalRoutingNodes));
-        }
-
-        // Split RoutingNode info
-        for (RoutingNode rn: globalRoutingNodes.getNodesToShards().values()) {
-            RoutingPool nodePool = RoutingPool.getNodePool(rn);
-            if (RoutingPool.REMOTE_CAPABLE.equals(nodePool)) {
-                poolScopedRoutingNodes.get(RoutingPool.REMOTE_CAPABLE).getNodesToShards().put(rn.nodeId(), rn);
-            }
-            PoolScopedRoutingNodes poolRouting = poolScopedRoutingNodes.get(RoutingPool.LOCAL_ONLY);
-            poolRouting.getNodesToShards().put(rn.nodeId(), rn);
-        }
-
-        // Split unassigned shards info
-        for (ShardRouting shard: globalRoutingNodes.unassigned()) {
-            PoolScopedRoutingNodes poolRouting = poolScopedRoutingNodes.get(RoutingPool.getShardPool(shard, globalAllocation));
-            poolRouting.unassigned().add(shard);
-        }
-
-        // Split ignored shards info
-        for (ShardRouting shard: globalRoutingNodes.unassigned().ignored()) {
+    private void remoteRoutingShards(RoutingNodes globalRoutingNodes, RoutingAllocation globalAllocation) {
+        for (ShardRouting shard: globalRoutingNodes.unassigned().drainIgnored()) {
             RoutingPool pool = RoutingPool.getShardPool(shard, globalAllocation);
-            PoolScopedRoutingNodes poolRouting = poolScopedRoutingNodes.get(pool);
-
             if (pool == RoutingPool.REMOTE_CAPABLE && shard.unassigned() && (shard.primary() || !shard.unassignedInfo().isDelayed())) {
-                poolRouting.unassigned().add(shard);
+                globalRoutingNodes.unassigned().add(shard);
             } else {
-                // TODO: Add test for isDelayed() == true. Handled by DelayedAllocationService and must be added with end-end tests.
-                poolRouting.unassigned().ignoreShard(shard, shard.unassignedInfo().getLastAllocationStatus(), globalAllocation.changes());
+                globalRoutingNodes.unassigned().addIgnored(shard);
             }
         }
-
-        return poolScopedRoutingNodes;
     }
+//    public static Map<RoutingPool, PoolScopedRoutingNodes> splitRoutingNodes(RoutingNodes globalRoutingNodes, RoutingAllocation globalAllocation) {
+//        Map<RoutingPool, PoolScopedRoutingNodes> poolScopedRoutingNodes = new HashMap<>();
+//        for (RoutingPool pool: RoutingPool.values()) {
+//            poolScopedRoutingNodes.put(pool, new PoolScopedRoutingNodes(globalRoutingNodes));
+//        }
+//
+//        // Split RoutingNode info
+//        for (RoutingNode routingNode: globalRoutingNodes.getNodesToShards().values()) {
+//            RoutingPool routingPool = RoutingPool.getNodePool(routingNode);
+//            if (RoutingPool.REMOTE_CAPABLE.equals(routingPool)) {
+//                poolScopedRoutingNodes.get(RoutingPool.REMOTE_CAPABLE).getNodesToShards().put(routingNode.nodeId(), routingNode);
+//            }
+//            PoolScopedRoutingNodes poolRouting = poolScopedRoutingNodes.get(RoutingPool.LOCAL_ONLY);
+//            poolRouting.getNodesToShards().put(routingNode.nodeId(), routingNode);
+//        }
+//
+//        // Split unassigned shards info
+//        for (ShardRouting shard: globalRoutingNodes.unassigned()) {
+//            PoolScopedRoutingNodes poolRoutingNodes = poolScopedRoutingNodes.get(RoutingPool.getShardPool(shard, globalAllocation));
+//            poolRoutingNodes.unassigned().add(shard);
+//        }
+//
+//        // Split ignored shards info
+//        for (ShardRouting shard: globalRoutingNodes.unassigned().ignored()) {
+//            RoutingPool pool = RoutingPool.getShardPool(shard, globalAllocation);
+//            PoolScopedRoutingNodes poolRouting = poolScopedRoutingNodes.get(pool);
+//
+//            if (pool == RoutingPool.REMOTE_CAPABLE && shard.unassigned() && (shard.primary() || !shard.unassignedInfo().isDelayed())) {
+//                poolRouting.unassigned().add(shard);
+//            } else {
+//                // TODO: Add test for isDelayed() == true. Handled by DelayedAllocationService and must be added with end-end tests.
+//                poolRouting.unassigned().ignoreShard(shard, shard.unassignedInfo().getLastAllocationStatus(), globalAllocation.changes());
+//            }
+//        }
+//
+//        return poolScopedRoutingNodes;
+//    }
+//
+//       private void reconcilePoolRoutingInformation(Map<RoutingPool, PoolScopedRoutingNodes> poolScopedRoutingNodes, RoutingNodes routingNodes) {
+//        routingNodes.unassigned().clearAll();
+//        int inactivePrimaryDelta = 0;
+//        int inactiveShardDelta = 0;
+//        int relocationShardDelta = 0;
+//
+//        // TODO: This reconciliation is O(#unassigned + #ignored). See if we can optimize
+//        for (RoutingPool pool: RoutingPool.values()) {
+//            PoolScopedRoutingNodes poolRouting = poolScopedRoutingNodes.get(pool);
+//
+//            for (ShardRouting shard: poolRouting.unassigned()) {
+//                routingNodes.unassigned().add(shard);
+//            }
+//
+//            for (ShardRouting shard: poolRouting.unassigned().ignored()) {
+//                routingNodes.unassigned().addIgnored(shard);
+//            }
+//
+//            inactivePrimaryDelta += poolRouting.getInactivePrimaryCount() - routingNodes.getInactivePrimaryCount();
+//            inactiveShardDelta += poolRouting.getInactiveShardCount() - routingNodes.getInactiveShardCount();
+//            relocationShardDelta += poolRouting.getRelocatingShardCount() - routingNodes.getRelocatingShardCount();
+//        }
+//
+//        routingNodes.setInactivePrimaryCount(routingNodes.getInactivePrimaryCount() + inactivePrimaryDelta);
+//        routingNodes.setInactiveShardCount(routingNodes.getInactiveShardCount() + inactiveShardDelta);
+//        routingNodes.setRelocatingShards(routingNodes.getRelocatingShardCount() + relocationShardDelta);
+//    }
 }

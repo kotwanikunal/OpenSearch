@@ -10,16 +10,16 @@ package org.opensearch.cluster.routing;
 
 public class PoolScopedRoutingNodes extends RoutingNodes {
     public PoolScopedRoutingNodes(RoutingNodes routingNodes) {
-        super(routingNodes.isReadOnly());
-        unassignedShards = new RoutingNodes.UnassignedShards(this);
-        assignedShards = routingNodes.getAssignedShards();
-        inactivePrimaryCount = routingNodes.getInactivePrimaryCount();
-        inactiveShardCount = routingNodes.getInactiveShardCount();
-        relocatingShards = routingNodes.getRelocatingShardCount();
-        recoveriesPerNode = routingNodes.getRecoveriesPerNode();            // Maintains recoveries per node
-        initialPrimaryRecoveries = routingNodes.getInitialPrimaryRecoveries();
-        initialReplicaRecoveries = routingNodes.getInitialReplicaRecoveries();
-        remoteInitializingShardCount = routingNodes.getRemoteInitializingShardCount();
-        remoteSearcherNodes = routingNodes.getRemoteSearcherNodes();
+        super(true);
+//        unassignedShards = new RoutingNodes.UnassignedShards(this);
+//        assignedShards = routingNodes.getAssignedShards();
+//        inactivePrimaryCount = routingNodes.getInactivePrimaryCount();
+//        inactiveShardCount = routingNodes.getInactiveShardCount();
+//        relocatingShards = routingNodes.getRelocatingShardCount();
+//        recoveriesPerNode = routingNodes.getRecoveriesPerNode();            // Maintains recoveries per node
+//        initialPrimaryRecoveries = routingNodes.getInitialPrimaryRecoveries();
+//        initialReplicaRecoveries = routingNodes.getInitialReplicaRecoveries();
+//        remoteInitializingShardCount = routingNodes.getRemoteInitializingShardCount();
+//        remoteSearcherNodes = routingNodes.getRemoteSearcherNodes();
     }
 }

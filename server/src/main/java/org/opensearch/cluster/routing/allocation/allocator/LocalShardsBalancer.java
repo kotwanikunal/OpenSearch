@@ -40,11 +40,12 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
 import static org.opensearch.cluster.routing.ShardRoutingState.RELOCATING;
 
-public class LocalShardsBalancerBalancer implements ShardsBalancer {
+public class LocalShardsBalancer implements ShardsBalancer {
     private final Logger logger;
     private final Map<String, BalancedShardsAllocator.ModelNode> nodes;
     private final RoutingAllocation allocation;
@@ -54,11 +55,11 @@ public class LocalShardsBalancerBalancer implements ShardsBalancer {
 
     private final float threshold;
     private final Metadata metadata;
-    private final float avgShardsPerNode;
+//    private final float avgShardsPerNode;
     private final BalancedShardsAllocator.NodeSorter sorter;
     private final Set<RoutingNode> inEligibleTargetNode;
 
-    public LocalShardsBalancerBalancer(Logger logger, RoutingAllocation allocation, boolean movePrimaryFirst, BalancedShardsAllocator.WeightFunction weight, float threshold) {
+    public LocalShardsBalancer(Logger logger, RoutingAllocation allocation, boolean movePrimaryFirst, BalancedShardsAllocator.WeightFunction weight, float threshold) {
         this.logger = logger;
         this.allocation = allocation;
         this.movePrimaryFirst = movePrimaryFirst;
@@ -66,7 +67,7 @@ public class LocalShardsBalancerBalancer implements ShardsBalancer {
         this.threshold = threshold;
         this.routingNodes = allocation.routingNodes();
         this.metadata = allocation.metadata();
-        avgShardsPerNode = ((float) metadata.getTotalNumberOfShards()) / routingNodes.size();
+//        avgShardsPerNode = ((float) metadata.getTotalNumberOfShards()) / routingNodes.size();
         nodes = Collections.unmodifiableMap(buildModelFromAssigned());
         sorter = newNodeSorter();
         inEligibleTargetNode = new HashSet<>();
@@ -90,7 +91,10 @@ public class LocalShardsBalancerBalancer implements ShardsBalancer {
      * Returns the global average of shards per node
      */
     public float avgShardsPerNode() {
-        return avgShardsPerNode;
+        float totalShards = nodes.values().stream()
+            .map(BalancedShardsAllocator.ModelNode::numShards)
+            .reduce(0, Integer::sum);
+        return totalShards/nodes.size();
     }
 
     /**
@@ -127,8 +131,8 @@ public class LocalShardsBalancerBalancer implements ShardsBalancer {
      * The actual balancing is delegated to {@link #balanceByWeights()}
      */
     public void balance() {
-        if (true)
-            return;
+//        if (true)
+//            return;
         if (logger.isTraceEnabled()) {
             logger.trace("Start balancing cluster");
         }
@@ -729,7 +733,14 @@ public class LocalShardsBalancerBalancer implements ShardsBalancer {
          * if we allocate for instance (0, R, IDX1) we move the second replica to the secondary array and proceed with
          * the next replica. If we could not find a node to allocate (0,R,IDX1) we move all it's replicas to ignoreUnassigned.
          */
-        ShardRouting[] primary = unassigned.drain();
+        List<ShardRouting> allUnassigned = Arrays.stream(unassigned.drain()).collect(Collectors.toList());
+        List<ShardRouting> filteredUnassigned = allUnassigned.stream()
+            .filter(unassignedShard -> !unassignedShard.index().getName().startsWith("restored_"))
+            .collect(Collectors.toList());
+        allUnassigned.removeAll(filteredUnassigned);
+        allUnassigned.forEach(shard -> routingNodes.unassigned().add(shard));
+
+        ShardRouting[] primary = filteredUnassigned.toArray(new ShardRouting[filteredUnassigned.size()]);
         ShardRouting[] secondary = new ShardRouting[primary.length];
         int secondaryLength = 0;
         int primaryLength = primary.length;

@@ -66,7 +66,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     private final String relocatingNodeId;
     private final boolean primary;
     private final ShardRoutingState state;
-    private final RecoverySource recoverySource;
+    private RecoverySource recoverySource;
     private final UnassignedInfo unassignedInfo;
     private final AllocationId allocationId;
     private final transient List<ShardRouting> asList;
@@ -532,6 +532,20 @@ public final class ShardRouting implements Writeable, ToXContentObject {
             allocationId,
             UNAVAILABLE_EXPECTED_SHARD_SIZE
         );
+    }
+
+    /**
+     * Make the active primary shard as replica
+     *
+     * @throws IllegalShardRoutingStateException if shard is already a replica
+     */
+    public ShardRouting moveActivePrimaryToReplica() {
+        assert active(): "expected an active shard " + this;
+        if (!primary) {
+            throw new IllegalShardRoutingStateException(this, "Not a primary shard, can't move to replica");
+        }
+        return new ShardRouting(shardId, currentNodeId, relocatingNodeId, false, state, recoverySource, unassignedInfo, allocationId,
+            expectedShardSize);
     }
 
     /**
