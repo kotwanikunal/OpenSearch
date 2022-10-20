@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 
+
 public class RemoteShardsBalancer implements ShardsBalancer {
     private final Logger logger;
     private final RoutingAllocation allocation;
@@ -69,7 +70,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         int throttledNodeCount = 0;
         while (routingNodesIter.hasNext()) {
             RoutingNode node = routingNodesIter.next();
-            Decision nodeDecision = allocation.deciders().canAllocate(node, allocation);
+            Decision nodeDecision = allocation.deciders().canAllocateAnyShardToNode(node, allocation);
             /* canAllocateAnyShardToNode decision can be THROTTLE for throttled nodes. To classify
              * as excluded nodes, we look for Decision.Type.NO
              */
@@ -125,7 +126,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
                                 shardShortSummary(shard), targetNode.nodeId(), currentShardDecision.getDecisions());
                         }
 
-                        Decision nodeLevelDecision = allocation.deciders().canAllocate(targetNode, allocation);
+                        Decision nodeLevelDecision = allocation.deciders().canAllocateAnyShardToNode(targetNode, allocation);
                         if (nodeLevelDecision.type() == Decision.Type.YES) {
                             logger.debug("Node: [{}] can still accept shards. Adding it back to the queue.", targetNode.nodeId());
                             eligibleNodes.offer(targetNode);
@@ -153,13 +154,11 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         }
         logger.trace("Performing balancing for remote shards.");
 
-        // Early return in case there are no nodes in the warm pool
         if (nodeList.isEmpty()) {
             logger.info("No eligible remote nodes found to perform balancing");
             return;
         }
 
-        // Populate the total primary shard count and primary shard count per node
         ObjectIntHashMap<String> primaryShardCount = new ObjectIntHashMap<>();
         int totalPrimaryShard = 0;
         for (RoutingNode node: nodeList) {
@@ -178,7 +177,6 @@ public class RemoteShardsBalancer implements ShardsBalancer {
         totalPrimaryShard += routingNodes.unassigned().getNumPrimaries();
         int avgPrimaryPerNode = (totalPrimaryShard + routingNodes.size() - 1) / routingNodes.size();
 
-        // Populate the from and target node lists to move the shards; using the primary shard count per node
         ArrayDeque<RoutingNode> sourceNodes = new ArrayDeque<>();
         ArrayDeque<RoutingNode> targetNodes = new ArrayDeque<>();
         for (RoutingNode node: nodeList) {
@@ -189,7 +187,6 @@ public class RemoteShardsBalancer implements ShardsBalancer {
             }
         }
 
-        // Try balance shards as long as there are valid source and destination nodes for shard relocation
         while (!sourceNodes.isEmpty() && !targetNodes.isEmpty()) {
             RoutingNode sourceNode = sourceNodes.poll();
             tryRebalanceNode(sourceNode, targetNodes, avgPrimaryPerNode, primaryShardCount);
@@ -292,7 +289,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
                         }
                         throttled = throttled || allocateDecision.type() == Decision.Type.THROTTLE;
 
-                        Decision nodeLevelDecision = allocation.deciders().canAllocate(node, allocation);
+                        Decision nodeLevelDecision = allocation.deciders().canAllocateAnyShardToNode(node, allocation);
                         if (nodeLevelDecision.type() == Decision.Type.YES) {
                             if (logger.isTraceEnabled()) {
                                 logger.trace("Node: [{}] can still accept shards, retaining it in queue - [{}]",
@@ -357,7 +354,7 @@ public class RemoteShardsBalancer implements ShardsBalancer {
 
                     // If the relocation attempt failed for the shard, check if the target node can accommodate any other shard; else remove the target node from the target list
                 } else {
-                    Decision nodeDecision = allocation.deciders().canAllocate(targetNode, allocation);
+                    Decision nodeDecision = allocation.deciders().canAllocateAnyShardToNode(targetNode, allocation);
                     if (nodeDecision.type() == Decision.Type.YES) {
                         targetNodes.offer(targetNode);
                         nodesCheckedForRelocation.add(targetNode.nodeId());

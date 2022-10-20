@@ -139,12 +139,13 @@ public class ShardsLimitAllocationDecider extends AllocationDecider {
     }
 
     @Override
-    public Decision canAllocate(RoutingNode node, RoutingAllocation allocation) {
+    public Decision canAllocateAnyShardToNode(RoutingNode node, RoutingAllocation allocation) {
         if (node.node().isRemoteSearcherNode()) {
             return Decision.ALWAYS;
         }
-        return super.canAllocate(node, allocation);
+        return super.canAllocateAnyShardToNode(node, allocation);
     }
+
 
     private Decision doDecide(
         ShardRouting shardRouting,

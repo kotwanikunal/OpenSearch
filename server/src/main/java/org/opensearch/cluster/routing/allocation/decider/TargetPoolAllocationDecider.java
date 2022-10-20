@@ -26,7 +26,7 @@ public class TargetPoolAllocationDecider extends AllocationDecider {
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         RoutingPool shardPool = RoutingPool.getShardPool(shardRouting, allocation);
         RoutingPool targetNodePool = RoutingPool.getNodePool(node);
-        if (shardPool != targetNodePool) {
+        if (RoutingPool.REMOTE_CAPABLE.equals(shardPool) && RoutingPool.LOCAL_ONLY.equals(targetNodePool)) {
             logger.debug("Shard: [{}] has target pool: [{}]. Cannot allocate on node: [{}] with target pool: [{}]",
                 shardRouting.shortSummary(), shardPool, node.node(), targetNodePool);
             return allocation.decision(Decision.NO, NAME,
@@ -43,7 +43,6 @@ public class TargetPoolAllocationDecider extends AllocationDecider {
 
     @Override
     public Decision canForceAllocatePrimary(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        // Override force allocation to prevent gateway allocator from assigning primaries in the wrong pool
         logger.debug("Evaluating force allocation for primary shard.");
         return canAllocate(shardRouting, node, allocation);
     }
@@ -56,7 +55,7 @@ public class TargetPoolAllocationDecider extends AllocationDecider {
     private Decision canAllocateInTargetPool(IndexMetadata indexMetadata, DiscoveryNode node, RoutingAllocation allocation) {
         RoutingPool indexPool = RoutingPool.getIndexPool(indexMetadata);
         RoutingPool targetNodePool = RoutingPool.getNodePool(node);
-        if (indexPool != targetNodePool) {
+        if (RoutingPool.REMOTE_CAPABLE.equals(indexPool) && RoutingPool.LOCAL_ONLY.equals(targetNodePool)) {
             logger.debug("Index: [{}] has target pool: [{}]. Cannot allocate on node: [{}] with target pool: [{}]",
                 indexMetadata.getIndex().getName(), indexPool, node, targetNodePool);
             return allocation.decision(Decision.NO, NAME,

@@ -38,7 +38,7 @@ public enum RoutingPool {
 
     public static RoutingPool getIndexPool(IndexMetadata indexMetadata) {
         Settings indexSettings = indexMetadata.getSettings();
-        if (IndexModule.Type.REMOTE_SNAPSHOT.match(indexSettings.get(IndexModule.INDEX_STORE_TYPE_SETTING.getKey()))) {
+        if (IndexModule.Type.REMOTE_SNAPSHOT.match(indexSettings.get(IndexModule.INDEX_STORE_TYPE_SETTING.getKey())) || indexMetadata.getIndex().getName().startsWith("restored_")) {
             return REMOTE_CAPABLE;
         }
         return LOCAL_ONLY;

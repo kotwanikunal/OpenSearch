@@ -109,34 +109,6 @@ public class AllocationDeciders extends AllocationDecider {
         return ret;
     }
 
-    // TODO: Fix this method for node level allocation decision
-    // Called from RemoteShardsBalancer
-    public Decision canAllocate(RoutingNode node, RoutingAllocation allocation) {
-        Decision.Multi ret = new Decision.Multi();
-        for (AllocationDecider allocationDecider : allocations) {
-            Decision decision = allocationDecider.canAllocate(node, allocation);
-            // short track if a NO is returned.
-            if (decision == Decision.NO) {
-                if (logger.isTraceEnabled()) {
-                    logger.trace(
-                        "Can not allocate on node [{}] due to [{}]",
-                        node.node(),
-                        allocationDecider.getClass().getSimpleName()
-                    );
-                }
-                // short circuit only if debugging is not enabled
-                if (allocation.debugDecision() == false) {
-                    return decision;
-                } else {
-                    ret.add(decision);
-                }
-            } else {
-                addDecision(ret, decision, allocation);
-            }
-        }
-        return ret;
-    }
-
     @Override
     public Decision canRemain(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         if (allocation.shouldIgnoreShardForNode(shardRouting.shardId(), node.nodeId())) {

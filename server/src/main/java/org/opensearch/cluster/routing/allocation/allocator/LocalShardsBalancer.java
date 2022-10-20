@@ -30,7 +30,6 @@ import org.opensearch.cluster.routing.allocation.decider.DiskThresholdDecider;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.util.FeatureFlags;
 import org.opensearch.gateway.PriorityComparator;
-import org.opensearch.index.IndexSettings;
 
 import java.util.ArrayList;
 import java.util.Arrays;
