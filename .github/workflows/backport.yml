@@ -14,8 +14,11 @@ jobs:
     name: Backport
     steps:
       - name: Backport
-        uses: VachaShah/backport@v2.0.0
+        id: backport
+        uses: VachaShah/backport@v2.1.0
         with:
           github_token: ${{ secrets.APP_PRIVATE_KEY }}
-          branch_name: backport/backport-${{ github.event.number }}
+          branch_name: backport/backport-<%= number %>-to-<%= base %>
           files_to_skip: 'CHANGELOG.md'
+      - name: Print output
+          run: echo "${{ backport.created_pull_requests }}"
