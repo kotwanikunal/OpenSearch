@@ -21,11 +21,11 @@ jobs:
           branch_name: backport/backport-<%= number %>-to-<%= base %>
           files_to_skip: 'CHANGELOG.md'
       - name: Backport Changelog
-          id: backport-changelog
-            uses: kotwanikunal/changelog-helper@v1.1.0
-          with:
-            backportHelper: true
-            originalPRNumber: ${{github.event.issue.number}}
-            backportPRNumber: ${{backport.created_pull_requests}}
-            github_token: ${{ secrets.APP_PRIVATE_KEY }}
-            version: '2.x'
+        id: backportchangelog
+        uses: kotwanikunal/changelog-helper@v1.1.2
+        with:
+          backportHelper: true
+          originalPRNumber: ${{ github.event.issue.number }}
+          backportPRNumber: ${{ steps.backport.created_pull_requests }}
+          githubToken: ${{ secrets.APP_PRIVATE_KEY }}
+          version: '2.x'
