@@ -28,3 +28,4 @@ jobs:
             originalPRNumber: ${{github.event.issue.number}}
             backportPRNumber: ${{backport.created_pull_requests}}
             github_token: ${{ secrets.APP_PRIVATE_KEY }}
+            version: '2.x'
