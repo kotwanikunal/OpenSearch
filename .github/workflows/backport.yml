@@ -20,5 +20,11 @@ jobs:
           github_token: ${{ secrets.APP_PRIVATE_KEY }}
           branch_name: backport/backport-<%= number %>-to-<%= base %>
           files_to_skip: 'CHANGELOG.md'
-      - name: Print output
-          run: echo "${{ backport.created_pull_requests }}"
+      - name: Backport Changelog
+          id: backport-changelog
+            uses: kotwanikunal/changelog-helper@v1.1.0
+          with:
+            backportHelper: true
+            originalPRNumber: ${{github.event.issue.number}}
+            backportPRNumber: ${{backport.created_pull_requests}}
+            github_token: ${{ secrets.APP_PRIVATE_KEY }}
