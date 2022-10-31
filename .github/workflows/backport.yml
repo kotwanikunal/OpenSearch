@@ -20,12 +20,17 @@ jobs:
           github_token: ${{ secrets.APP_PRIVATE_KEY }}
           branch_name: backport/backport-<%= number %>-to-<%= base %>
           files_to_skip: 'CHANGELOG.md'
+      - name: PR branch
+        env:
+          BRANCH_NAME: ${{ github.event.pull_request.headRefName }}
+        run: echo "BRANCH_NAME"
       - name: Backport Changelog
-          id: backport-changelog
-            uses: kotwanikunal/changelog-helper@v1.1.0
-          with:
-            backportHelper: true
-            originalPRNumber: ${{github.event.issue.number}}
-            backportPRNumber: ${{backport.created_pull_requests}}
-            github_token: ${{ secrets.APP_PRIVATE_KEY }}
-            version: '2.x'
+        id: backportchangelog
+        uses: kotwanikunal/changelog-helper@v1.1.2
+        with:
+          changeLogPath: 'CHANGELOG.md'
+          backportHelper: true
+          originalPRNumber: ${{ github.event.pull_request.number }}
+          backportPRNumber: ${{ steps.backport.created_pull_requests[github.event.pull_request.headRefName] }}
+          githubToken: ${{ secrets.APP_PRIVATE_KEY }}
+          version: '2.x'
