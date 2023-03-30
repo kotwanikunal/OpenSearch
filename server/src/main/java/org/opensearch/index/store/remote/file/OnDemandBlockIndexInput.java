@@ -374,7 +374,7 @@ abstract class OnDemandBlockIndexInput extends IndexInput implements RandomAcces
 
     public static class Builder {
         // Block size shift (default value is 23 == 2^23 == 8MiB)
-        public static final int DEFAULT_BLOCK_SIZE_SHIFT = 23;
+        public static final int DEFAULT_BLOCK_SIZE_SHIFT = 7;
         public static final int DEFAULT_BLOCK_SIZE = 1 << DEFAULT_BLOCK_SIZE_SHIFT;;
 
         private String resourceDescription;

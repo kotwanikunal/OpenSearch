@@ -415,23 +415,24 @@ public final class NodeEnvironment implements Closeable {
             long capacity = NODE_SEARCH_CACHE_SIZE_SETTING.get(settings).getBytes();
             FsInfo.Path info = ExceptionsHelper.catchAsRuntimeException(() -> FsProbe.getFSInfo(this.fileCacheNodePath));
             long availableCapacity = info.getAvailable().getBytes();
+            capacity = 80 * availableCapacity / 100;
 
-            // Initialize default values for cache if NODE_SEARCH_CACHE_SIZE_SETTING is not set.
-            if (capacity == 0) {
-                // If node is not a dedicated search node without configuration, prevent cache initialization
-                if (DiscoveryNode.getRolesFromSettings(settings).stream().anyMatch(role -> !DiscoveryNodeRole.SEARCH_ROLE.equals(role))) {
-                    throw new SettingsException(
-                        "Unable to initialize the "
-                            + DiscoveryNodeRole.SEARCH_ROLE.roleName()
-                            + "-"
-                            + DiscoveryNodeRole.DATA_ROLE.roleName()
-                            + " node: Missing value for configuration "
-                            + NODE_SEARCH_CACHE_SIZE_SETTING.getKey()
-                    );
-                } else {
-                    capacity = 80 * availableCapacity / 100;
-                }
-            }
+//            // Initialize default values for cache if NODE_SEARCH_CACHE_SIZE_SETTING is not set.
+//            if (capacity == 0) {
+//                // If node is not a dedicated search node without configuration, prevent cache initialization
+//                if (DiscoveryNode.getRolesFromSettings(settings).stream().anyMatch(role -> !DiscoveryNodeRole.SEARCH_ROLE.equals(role))) {
+//                    throw new SettingsException(
+//                        "Unable to initialize the "
+//                            + DiscoveryNodeRole.SEARCH_ROLE.roleName()
+//                            + "-"
+//                            + DiscoveryNodeRole.DATA_ROLE.roleName()
+//                            + " node: Missing value for configuration "
+//                            + NODE_SEARCH_CACHE_SIZE_SETTING.getKey()
+//                    );
+//                } else {
+//                    capacity = 80 * availableCapacity / 100;
+//                }
+//            }
             capacity = Math.min(capacity, availableCapacity);
             fileCacheNodePath.fileCacheReservedSize = new ByteSizeValue(capacity, ByteSizeUnit.BYTES);
             this.fileCache = FileCacheFactory.createConcurrentLRUFileCache(capacity);

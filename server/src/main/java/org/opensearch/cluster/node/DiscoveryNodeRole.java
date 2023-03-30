@@ -303,7 +303,12 @@ public abstract class DiscoveryNodeRole implements Comparable<DiscoveryNodeRole>
         @Override
         public Setting<Boolean> legacySetting() {
             // search role is added in 2.4 so doesn't need to configure legacy setting
-            return null;
+            return Setting.boolSetting(
+                "node.search",
+                true,
+                Property.NodeScope
+            );
+//            return null;
         }
 
     };

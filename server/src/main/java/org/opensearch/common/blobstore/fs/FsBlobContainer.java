@@ -32,6 +32,7 @@
 
 package org.opensearch.common.blobstore.fs;
 
+import org.opensearch.SpecialPermission;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobMetadata;
@@ -165,6 +166,7 @@ public class FsBlobContainer extends AbstractBlobContainer {
 
     @Override
     public InputStream readBlob(String name) throws IOException {
+        SpecialPermission.check();
         final Path resolvedPath = path.resolve(name);
         try {
             return Files.newInputStream(resolvedPath);
@@ -175,6 +177,7 @@ public class FsBlobContainer extends AbstractBlobContainer {
 
     @Override
     public InputStream readBlob(String blobName, long position, long length) throws IOException {
+        SpecialPermission.check();
         final SeekableByteChannel channel = Files.newByteChannel(path.resolve(blobName));
         if (position > 0L) {
             channel.position(position);

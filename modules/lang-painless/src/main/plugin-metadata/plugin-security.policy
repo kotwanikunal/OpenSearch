@@ -31,6 +31,8 @@
  */
 
 grant {
+  permission org.opensearch.SpecialPermission "*";
+
   // needed to generate runtime classes
   permission java.lang.RuntimePermission "createClassLoader";
 
