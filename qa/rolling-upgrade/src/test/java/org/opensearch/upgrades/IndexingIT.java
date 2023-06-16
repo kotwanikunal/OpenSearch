@@ -236,7 +236,7 @@ public class IndexingIT extends AbstractRollingTestCase {
      * This test verifies that during rolling upgrades the segment replication does not break when replica shards can
      * be running on older codec versions.
      *
-     * @throws Exception
+     * @throws Exception test
      */
     public void testIndexingWithSegRep() throws Exception {
         final String indexName = "test-index-segrep";

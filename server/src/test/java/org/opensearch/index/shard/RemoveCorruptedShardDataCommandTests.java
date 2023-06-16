@@ -61,6 +61,7 @@ import org.opensearch.index.MergePolicyConfig;
 import org.opensearch.index.engine.EngineConfigFactory;
 import org.opensearch.index.engine.InternalEngineFactory;
 import org.opensearch.index.seqno.RetentionLeaseSyncer;
+import org.opensearch.index.store.LocalOnlyStore;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.translog.TestTranslog;
 import org.opensearch.index.translog.TranslogCorruptedException;
@@ -538,7 +539,7 @@ public class RemoveCorruptedShardDataCommandTests extends IndexShardTestCase {
             final BaseDirectoryWrapper baseDirectoryWrapper = newFSDirectory(shardPath.resolveIndex());
             // index is corrupted - don't even try to check index on close - it fails
             baseDirectoryWrapper.setCheckIndexOnClose(false);
-            return new Store(shardId, indexSettings, baseDirectoryWrapper, new DummyShardLock(shardId));
+            return new LocalOnlyStore(shardId, indexSettings, baseDirectoryWrapper, new DummyShardLock(shardId));
         };
 
         return newShard(

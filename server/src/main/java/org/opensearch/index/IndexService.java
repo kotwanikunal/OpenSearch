@@ -88,6 +88,7 @@ import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.index.shard.ShardNotInPrimaryModeException;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.similarity.SimilarityService;
+import org.opensearch.index.store.LocalOnlyStore;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.index.translog.TranslogFactory;
@@ -473,11 +474,11 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             Store remoteStore = null;
             if (this.indexSettings.isRemoteStoreEnabled()) {
                 Directory remoteDirectory = remoteDirectoryFactory.newDirectory(this.indexSettings, path);
-                remoteStore = new Store(shardId, this.indexSettings, remoteDirectory, lock, Store.OnClose.EMPTY);
+                remoteStore = new LocalOnlyStore(shardId, this.indexSettings, remoteDirectory, lock, Store.OnClose.EMPTY);
             }
 
             Directory directory = directoryFactory.newDirectory(this.indexSettings, path);
-            store = new Store(
+            store = new LocalOnlyStore(
                 shardId,
                 this.indexSettings,
                 directory,

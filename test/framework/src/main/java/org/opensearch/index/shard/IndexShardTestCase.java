@@ -97,6 +97,7 @@ import org.opensearch.index.seqno.RetentionLeaseSyncer;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.similarity.SimilarityService;
 import org.opensearch.index.snapshots.IndexShardSnapshotStatus;
+import org.opensearch.index.store.LocalOnlyStore;
 import org.opensearch.index.store.RemoteDirectory;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 import org.opensearch.index.store.Store;
@@ -258,7 +259,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
     }
 
     protected Store createStore(ShardId shardId, IndexSettings indexSettings, Directory directory) throws IOException {
-        return new Store(shardId, indexSettings, directory, new DummyShardLock(shardId));
+        return new LocalOnlyStore(shardId, indexSettings, directory, new DummyShardLock(shardId));
     }
 
     protected Releasable acquirePrimaryOperationPermitBlockingly(IndexShard indexShard) throws ExecutionException, InterruptedException {
