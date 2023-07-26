@@ -15,6 +15,7 @@ import org.apache.lucene.index.CorruptIndexException;
 import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.SetOnce;
 import org.opensearch.common.StreamContext;
+import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
@@ -24,6 +25,7 @@ import org.opensearch.common.io.InputStreamContainer;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Path;
 import java.util.Objects;
 
 /**
@@ -36,7 +38,6 @@ public class RemoteTransferContainer implements Closeable {
     private int numberOfParts;
     private long partSize;
     private long lastPartSize;
-
     private final long contentLength;
     private final SetOnce<InputStream[]> inputStreams = new SetOnce<>();
     private final String fileName;
@@ -46,6 +47,7 @@ public class RemoteTransferContainer implements Closeable {
     private final long expectedChecksum;
     private final OffsetRangeInputStreamSupplier offsetRangeInputStreamSupplier;
     private final boolean isRemoteDataIntegritySupported;
+    private final Path localStorePath;
 
     private static final Logger log = LogManager.getLogger(RemoteTransferContainer.class);
 
@@ -79,6 +81,15 @@ public class RemoteTransferContainer implements Closeable {
         this.offsetRangeInputStreamSupplier = offsetRangeInputStreamSupplier;
         this.expectedChecksum = expectedChecksum;
         this.isRemoteDataIntegritySupported = isRemoteDataIntegritySupported;
+        this.localStorePath = null;
+    }
+
+    public RemoteTransferContainer(
+        String fileName,
+        String remoteFileName,
+        boolean isRemoteDataIntegritySupported
+    ) {
+        this(fileName, remoteFileName, -1L, false, null, null, -1L, isRemoteDataIntegritySupported);
     }
 
     /**
@@ -94,6 +105,18 @@ public class RemoteTransferContainer implements Closeable {
             this::finalizeUpload,
             isRemoteDataIntegrityCheckPossible(),
             isRemoteDataIntegrityCheckPossible() ? expectedChecksum : null
+        );
+    }
+
+    /**
+     * @return The {@link ReadContext} for the current download
+     */
+    public ReadContext createReadContext() {
+        return new ReadContext(
+            remoteFileName,
+            fileName,
+            this::finalizeUpload,
+            isRemoteDataIntegrityCheckPossible()
         );
     }
 
@@ -143,6 +166,10 @@ public class RemoteTransferContainer implements Closeable {
         OffsetRangeInputStream get(long size, long position) throws IOException;
     }
 
+    public interface InputStreamSupplier {
+        InputStream get(long size, long position) throws IOException;
+    }
+
     interface LocalStreamSupplier<Stream> {
         Stream get() throws IOException;
     }
@@ -154,10 +181,12 @@ public class RemoteTransferContainer implements Closeable {
     ) {
         return () -> {
             try {
+                InputStream inputStream;
                 OffsetRangeInputStream offsetRangeInputStream = offsetRangeInputStreamSupplier.get(size, position);
-                InputStream inputStream = !isRemoteDataIntegrityCheckPossible()
+                inputStream = !isRemoteDataIntegrityCheckPossible()
                     ? new ResettableCheckedInputStream(offsetRangeInputStream, fileName)
                     : offsetRangeInputStream;
+
                 Objects.requireNonNull(inputStreams.get())[streamIdx] = inputStream;
 
                 return new InputStreamContainer(inputStream, size, position);

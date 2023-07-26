@@ -27,6 +27,7 @@ import org.opensearch.action.ActionListener;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.exception.CorruptFileException;
+import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.transfer.RemoteTransferContainer;
@@ -398,6 +399,76 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         }
     }
 
+    /**
+     * Provides an async mechanism to copy file from a remote directory to the provided directory utilizing multi-stream
+     * downloads
+     * @param to directory where the file has to be copied
+     * @param src name of the file
+     * @param context context for the IO operation
+     * @param listener listener to be notified when download is complete
+     * @throws IOException
+     */
+    public void copyTo(Directory to, String src, IOContext context, ActionListener<Void> listener) throws IOException {
+        try {
+            downloadBlob(to, src, context, listener);
+        } catch (Exception e) {
+            listener.onFailure(e);
+        }
+    }
+
+    private void downloadBlob(Directory to, String localFileName, IOContext ioContext, ActionListener<Void> listener)
+        throws Exception {
+
+        final String remoteFileName = getExistingRemoteFilename(localFileName);
+        RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
+            localFileName,
+            remoteFileName,
+            remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer
+
+        );
+
+        ActionListener<Void> completionListener = ActionListener.wrap(resp -> {
+            try {
+                postDownload();
+                listener.onResponse(null);
+            } catch (Exception e) {
+                logger.error(() -> new ParameterizedMessage("Exception in segment postDownload for file [{}]", remoteFileName), e);
+                listener.onFailure(e);
+            }
+        }, ex -> {
+            logger.error(() -> new ParameterizedMessage("Failed to download blob {}", remoteFileName), ex);
+            IOException corruptIndexException = ExceptionsHelper.unwrapCorruption(ex);
+            if (corruptIndexException != null) {
+                listener.onFailure(corruptIndexException);
+                return;
+            }
+            Throwable throwable = ExceptionsHelper.unwrap(ex, CorruptFileException.class);
+            if (throwable != null) {
+                CorruptFileException corruptFileException = (CorruptFileException) throwable;
+                listener.onFailure(new CorruptIndexException(corruptFileException.getMessage(), corruptFileException.getFileName()));
+                return;
+            }
+            listener.onFailure(ex);
+        });
+
+        completionListener = ActionListener.runBefore(completionListener, () -> {
+            try {
+                remoteTransferContainer.close();
+            } catch (Exception e) {
+                logger.warn("Error occurred while closing streams", e);
+            }
+        });
+
+        ReadContext readContext = remoteTransferContainer.createReadContext();
+        // TODO: Change this logic to parallel streams + temp directory
+        readContext.setLocalDirectory(to);
+        ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).asyncBlobDownload(readContext, completionListener);
+    }
+
+    private void postDownload() {
+        // TODO: Logic to merge smaller files from stream downloads
+    }
+
     private void uploadBlob(Directory from, String src, String remoteFileName, IOContext ioContext, ActionListener<Void> listener)
         throws Exception {
         long expectedChecksum = calculateChecksumOfChecksum(from, src);
@@ -411,7 +482,11 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             contentLength,
             true,
             WritePriority.NORMAL,
-            (size, position) -> new OffsetRangeIndexInputStream(from.openInput(src, ioContext), size, position),
+            (size, position) -> new OffsetRangeIndexInputStream(
+                from.openInput(src, ioContext),
+                size,
+                position
+            ),
             expectedChecksum,
             remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer
         );

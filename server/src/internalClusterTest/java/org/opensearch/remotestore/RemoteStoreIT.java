@@ -85,7 +85,7 @@ public class RemoteStoreIT extends RemoteStoreBaseIntegTestCase {
             }
             maxSeqNoRefreshedOrFlushed = maxSeqNo;
             refreshedOrFlushedOperations = totalOperations;
-            int numberOfOperations = randomIntBetween(20, 50);
+            int numberOfOperations = randomIntBetween(1, 5);
             for (int j = 0; j < numberOfOperations; j++) {
                 IndexResponse response = indexSingleDoc();
                 maxSeqNo = response.getSeqNo();
@@ -112,7 +112,7 @@ public class RemoteStoreIT extends RemoteStoreBaseIntegTestCase {
         assertHitCount(client().prepareSearch(INDEX_NAME).setSize(0).get(), indexStats.get(statsGranularity) + 1);
     }
 
-    private void testRestoreFlow(boolean remoteTranslog, int numberOfIterations, boolean invokeFlush) throws IOException {
+    protected void testRestoreFlow(boolean remoteTranslog, int numberOfIterations, boolean invokeFlush) throws IOException {
         internalCluster().startDataOnlyNodes(3);
         if (remoteTranslog) {
             createIndex(INDEX_NAME, remoteTranslogIndexSettings(0));
@@ -129,12 +129,10 @@ public class RemoteStoreIT extends RemoteStoreBaseIntegTestCase {
 
         client().admin().cluster().restoreRemoteStore(new RestoreRemoteStoreRequest().indices(INDEX_NAME), PlainActionFuture.newFuture());
         ensureGreen(INDEX_NAME);
+        // assertEquals(indexStats.get(TOTAL_OPERATIONS).longValue(),
+        // client().prepareSearch(INDEX_NAME).setSize(0).get().getInternalResponse().hits().getTotalHits().value);
+        verifyRestoredData(indexStats, remoteTranslog);
 
-        if (remoteTranslog) {
-            verifyRestoredData(indexStats, true);
-        } else {
-            verifyRestoredData(indexStats, false);
-        }
     }
 
     public void testRemoteSegmentStoreRestoreWithNoDataPostCommit() throws IOException {

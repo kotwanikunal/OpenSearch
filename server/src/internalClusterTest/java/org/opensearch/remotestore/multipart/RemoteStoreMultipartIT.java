@@ -13,6 +13,7 @@ import org.opensearch.plugins.Plugin;
 import org.opensearch.remotestore.RemoteStoreIT;
 import org.opensearch.remotestore.multipart.mocks.MockFsRepositoryPlugin;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.stream.Collectors;
@@ -29,10 +30,16 @@ public class RemoteStoreMultipartIT extends RemoteStoreIT {
 
     @Override
     protected void putRepository(Path path) {
+        logger.error("Repo Path: {}", path);
         assertAcked(
             clusterAdmin().preparePutRepository(REPOSITORY_NAME)
                 .setType(MockFsRepositoryPlugin.TYPE)
                 .setSettings(Settings.builder().put("location", path))
         );
+    }
+
+    @Override
+    public void testRemoteSegmentStoreRestoreWithNoDataPostCommit() throws IOException {
+        testRestoreFlow(true, 2, true);
     }
 }

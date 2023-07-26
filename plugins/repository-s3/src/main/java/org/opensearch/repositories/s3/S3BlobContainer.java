@@ -46,6 +46,7 @@ import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStoreException;
 import org.opensearch.common.blobstore.DeleteResult;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
+import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.support.AbstractBlobContainer;
@@ -208,6 +209,11 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
             logger.info("exception error from blob container for file {}", writeContext.getFileName());
             throw new IOException(e);
         }
+    }
+
+    @Override
+    public void asyncBlobDownload(ReadContext writeContext, ActionListener<Void> completionListener) throws IOException {
+
     }
 
     // package private for testing

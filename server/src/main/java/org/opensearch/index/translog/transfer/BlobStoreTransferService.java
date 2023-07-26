@@ -120,7 +120,11 @@ public class BlobStoreTransferService implements TransferService {
                 contentLength,
                 true,
                 writePriority,
-                (size, position) -> new OffsetRangeFileInputStream(fileSnapshot.getPath(), size, position),
+                (RemoteTransferContainer.OffsetRangeInputStreamSupplier) (size, position) -> new OffsetRangeFileInputStream(
+                    fileSnapshot.getPath(),
+                    size,
+                    position
+                ),
                 Objects.requireNonNull(fileSnapshot.getChecksum()),
                 blobStore.blobContainer(blobPath) instanceof VerifyingMultiStreamBlobContainer
             );

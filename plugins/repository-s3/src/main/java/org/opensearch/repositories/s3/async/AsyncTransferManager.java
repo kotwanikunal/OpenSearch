@@ -12,6 +12,10 @@ import com.jcraft.jzlib.JZlib;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.util.IOUtils;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.blobstore.exception.CorruptFileException;
@@ -21,7 +25,10 @@ import org.opensearch.common.unit.ByteSizeUnit;
 import org.opensearch.common.util.ByteUtils;
 import org.opensearch.repositories.s3.io.CheckedContainer;
 import org.opensearch.repositories.s3.SocketAccess;
+import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
+import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.HttpStatusCode;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -33,17 +40,22 @@ import software.amazon.awssdk.services.s3.model.CompletedPart;
 import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.utils.CompletableFutureUtils;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
@@ -100,6 +112,37 @@ public final class AsyncTransferManager {
         }
 
         return returnFuture;
+    }
+
+    public InputStream downloadObject(S3AsyncClient s3AsyncClient) {
+        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+            .bucket("")
+            .key("")
+            .partNumber(1)
+            .build();
+
+                    CompletableFuture<ResponseInputStream<GetObjectResponse>> responseFuture =       s3AsyncClient.getObject(getObjectRequest, AsyncResponseTransformer.toBlockingInputStream());
+
+        return responseFuture.join();
+//        Directory directory = null;
+//        try {
+//            IndexOutput indexOutput = directory.createOutput("", IOContext.DEFAULT);
+//            CompletableFuture<ResponseInputStream<GetObjectResponse>> responseFuture =       s3AsyncClient.getObject(getObjectRequest, AsyncResponseTransformer.toBlockingInputStream());
+//            ResponseInputStream<GetObjectResponse> responseResponseInputStream = responseFuture.join();
+//            indexOutput.writeByte(responseResponseInputStream.readAllBytes()[responseResponseInputStream.available()]);
+//        } catch (IOException e) {
+//            throw new RuntimeException(e);
+//        }
+
+
+
+//        CompletableFuture<ResponseBytes<GetObjectResponse>> responseFuture = s3AsyncClient.getObject(getObjectRequest, AsyncResponseTransformer.toBytes());
+//        responseFuture.join().asInputStream()
+
+
+//        Future<GetObjectResponse> getObjectResponseFuture =
+//            s3AsyncClient.getObject(getObjectRequest, AsyncResponseTransformer.toFile(Path.of("")));
+
     }
 
     private void uploadInParts(

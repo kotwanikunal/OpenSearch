@@ -93,8 +93,19 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
         ActionListener<GetSegmentFilesResponse> listener
     ) {
         try {
-            indexShard.syncSegmentsFromRemoteSegmentStore(false, true, false);
-            listener.onResponse(new GetSegmentFilesResponse(Collections.emptyList()));
+            ActionListener listener1 = new ActionListener() {
+                @Override
+                public void onResponse(Object o) {
+                    listener.onResponse(new GetSegmentFilesResponse(Collections.emptyList()));
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    listener.onFailure(e);
+                }
+            };
+            indexShard.syncSegmentsFromRemoteSegmentStore(false, true, false, listener1);
+
         } catch (Exception e) {
             listener.onFailure(e);
         }

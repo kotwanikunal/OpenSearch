@@ -8,9 +8,15 @@
 
 package org.opensearch.remotestore.multipart.mocks;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.CorruptIndexException;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexOutput;
 import org.opensearch.action.ActionListener;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
+import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.blobstore.BlobPath;
@@ -34,6 +40,8 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
 
     private final boolean triggerDataIntegrityFailure;
 
+    private static final Logger logger = LogManager.getLogger(MockFsVerifyingBlobContainer.class);
+
     public MockFsVerifyingBlobContainer(FsBlobStore blobStore, BlobPath blobPath, Path path, boolean triggerDataIntegrityFailure) {
         super(blobStore, blobPath, path);
         this.triggerDataIntegrityFailure = triggerDataIntegrityFailure;
@@ -41,7 +49,6 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
 
     @Override
     public void asyncBlobUpload(WriteContext writeContext, ActionListener<Void> completionListener) throws IOException {
-
         int nParts = 10;
         long partSize = writeContext.getFileSize() / nParts;
         StreamContext streamContext = writeContext.getStreamProvider(partSize);
@@ -112,6 +119,71 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
             completionListener.onFailure(e);
         }
 
+    }
+
+    @Override
+    public void asyncBlobDownload(ReadContext readContext, ActionListener<Void> completionListener) throws IOException {
+        int nParts = 10;
+        long partSize = readContext.getFileSize() / nParts;
+        StreamContext streamContext = readContext.getStreamProvider(partSize);
+        Directory directory = readContext.getLocalDirectory();
+
+        byte[] buffer = new byte[(int) readContext.getFileSize()];
+        AtomicLong totalContentRead = new AtomicLong();
+        CountDownLatch latch = new CountDownLatch(streamContext.getNumberOfParts());
+        for (int partIdx = 0; partIdx < streamContext.getNumberOfParts(); partIdx++) {
+            int finalPartIdx = partIdx;
+            Thread thread = new Thread(() -> {
+                try {
+                    InputStreamContainer inputStreamContainer = streamContext.provideStream(finalPartIdx);
+                    InputStream inputStream = inputStreamContainer.getInputStream();
+                    long remainingContentLength = inputStreamContainer.getContentLength();
+                    long offset = partSize * finalPartIdx;
+                    while (remainingContentLength > 0) {
+                        int readContentLength = inputStream.read(buffer, (int) offset, (int) remainingContentLength);
+                        totalContentRead.addAndGet(readContentLength);
+                        remainingContentLength -= readContentLength;
+                        offset += readContentLength;
+                    }
+                    inputStream.close();
+                } catch (IOException e) {
+                    completionListener.onFailure(e);
+                } finally {
+                    latch.countDown();
+                }
+            });
+            thread.start();
+        }
+        try {
+            if (!latch.await(TRANSFER_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                throw new IOException("Timed out waiting for file transfer to complete for " + readContext.getFileName());
+            }
+        } catch (InterruptedException e) {
+            throw new IOException("Await interrupted on CountDownLatch, transfer failed for " + readContext.getFileName());
+        }
+        logger.error("Buffer: {}", buffer);
+        try (IndexOutput output = directory.createOutput(readContext.getFileName(), IOContext.DEFAULT)) {
+            output.writeBytes(buffer, buffer.length);
+        }
+
+        try {
+            // bulks need to succeed for segment files to be generated
+            if (isSegmentFile(readContext.getFileName()) && triggerDataIntegrityFailure) {
+                completionListener.onFailure(
+                    new RuntimeException(
+                        new CorruptIndexException(
+                            "Data integrity check failure for file: " + readContext.getFileName(),
+                            readContext.getFileName()
+                        )
+                    )
+                );
+            } else {
+                readContext.getDownloadFinalizer().accept(true);
+                completionListener.onResponse(null);
+            }
+        } catch (Exception e) {
+            completionListener.onFailure(e);
+        }
     }
 
     private boolean isSegmentFile(String filename) {

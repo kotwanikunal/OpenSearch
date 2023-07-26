@@ -188,7 +188,12 @@ public class RemoteStoreReplicationSourceTests extends OpenSearchIndexLevelRepli
         );
         Mockito.doThrow(new RuntimeException("testing"))
             .when(mockShard)
-            .syncSegmentsFromRemoteSegmentStore(Mockito.anyBoolean(), Mockito.anyBoolean(), Mockito.anyBoolean());
+            .syncSegmentsFromRemoteSegmentStore(
+                Mockito.anyBoolean(),
+                Mockito.anyBoolean(),
+                Mockito.anyBoolean(),
+                new PlainActionFuture<>()
+            );
         assertThrows(ExecutionException.class, () -> {
             final PlainActionFuture<GetSegmentFilesResponse> res = PlainActionFuture.newFuture();
             replicationSource.getSegmentFiles(REPLICATION_ID, checkpoint, Collections.emptyList(), mockShard, res);

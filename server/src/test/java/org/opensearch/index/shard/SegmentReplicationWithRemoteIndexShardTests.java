@@ -8,6 +8,7 @@
 
 package org.opensearch.index.shard;
 
+import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.index.engine.NRTReplicationEngineFactory;
@@ -36,7 +37,7 @@ public class SegmentReplicationWithRemoteIndexShardTests extends OpenSearchIndex
         assertDocs(primaryShard, "1", "2");
         flushShard(primaryShard);
 
-        replicaShard.syncSegmentsFromRemoteSegmentStore(true, true, false);
+        replicaShard.syncSegmentsFromRemoteSegmentStore(true, true, false, new PlainActionFuture<>());
         assertDocs(replicaShard, "1", "2");
         closeShards(primaryShard, replicaShard);
     }

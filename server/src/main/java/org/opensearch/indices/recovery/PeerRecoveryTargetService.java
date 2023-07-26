@@ -41,6 +41,7 @@ import org.opensearch.OpenSearchException;
 import org.opensearch.OpenSearchTimeoutException;
 import org.opensearch.action.ActionListener;
 import org.opensearch.action.ActionRunnable;
+import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.ClusterStateObserver;
 import org.opensearch.cluster.metadata.IndexMetadata;
@@ -245,7 +246,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                     indexShard.prepareForIndexRecovery();
                     final boolean hasRemoteSegmentStore = indexShard.indexSettings().isRemoteStoreEnabled();
                     if (hasRemoteSegmentStore) {
-                        indexShard.syncSegmentsFromRemoteSegmentStore(false, false, true);
+                        indexShard.syncSegmentsFromRemoteSegmentStore(false, false, true, new PlainActionFuture<>());
                     }
                     final boolean hasRemoteTranslog = recoveryTarget.state().getPrimary() == false && indexShard.isRemoteTranslogEnabled();
                     final boolean hasNoTranslog = indexShard.indexSettings().isRemoteSnapshot();
