@@ -49,6 +49,7 @@ import org.opensearch.threadpool.ThreadPool;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -449,6 +450,32 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                 listener.onFailure(e);
             }
         }
+    }
+
+    /**
+     * Copies the segment from the remote directory to a local directory, preferably using an async mechanism using multi stream support.
+     * @param storeDirectory The directory where the segment needs to be copied to
+     * @param src The name of the segment file
+     * @param segmentDirectoryPath The file path for the segment directory
+     * @param segmentCompletionListener Async listener which should be notified once the segment is downloaded or in case of failure
+     */
+    public void copyTo(Directory storeDirectory, String src, Path segmentDirectoryPath, ActionListener<String> segmentCompletionListener) {
+        final String blobName = getExistingRemoteFilename(src);
+        if (remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer) {
+            VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
+            Path destinationPath = segmentDirectoryPath.resolve(src);
+            blobContainer.asyncBlobDownload(blobName, destinationPath, segmentCompletionListener);
+        } else {
+            // Fallback to older mechanism of downloading the file
+            try {
+                storeDirectory.copyFrom(this, src, src, IOContext.DEFAULT);
+                segmentCompletionListener.onResponse(src);
+            } catch (IOException e) {
+                segmentCompletionListener.onFailure(e);
+            }
+
+        }
+
     }
 
     private void uploadBlob(Directory from, String src, String remoteFileName, IOContext ioContext, ActionListener<Void> listener)
