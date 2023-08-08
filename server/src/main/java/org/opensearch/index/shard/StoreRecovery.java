@@ -531,38 +531,6 @@ final class StoreRecovery {
         store.incRef();
         remoteStore.incRef();
         try {
-//            ActionListener listener = new ActionListener() {
-//                @Override
-//                public void onResponse(Object o) {
-//                    try {
-//                        if (store.directory().listAll().length == 0) {
-//                            store.createEmpty(indexShard.indexSettings().getIndexVersionCreated().luceneVersion);
-//                        }
-//                        if (indexShard.indexSettings.isRemoteTranslogStoreEnabled()) {
-//                            indexShard.syncTranslogFilesFromRemoteTranslog();
-//                        } else {
-//                            bootstrap(indexShard, store);
-//                        }
-//
-//                        assert indexShard.shardRouting.primary() : "only primary shards can recover from store";
-//                        indexShard.recoveryState().getIndex().setFileDetailsComplete();
-//                        indexShard.openEngineAndRecoverFromTranslog();
-//                        indexShard.getEngine().fillSeqNoGaps(indexShard.getPendingPrimaryTerm());
-//                        indexShard.finalizeRecovery();
-//                        indexShard.postRecovery("post recovery from remote_store");
-//                    } catch (IOException e) {
-//                        throw new UncheckedIOException(e);
-//                    } finally {
-//                        store.decRef();
-//                        remoteStore.decRef();
-//                    }
-//                }
-//
-//                @Override
-//                public void onFailure(Exception e) {
-//
-//                }
-//            };
             // Download segments from remote segment store
             indexShard.syncSegmentsFromRemoteSegmentStore(true, true, true);
 

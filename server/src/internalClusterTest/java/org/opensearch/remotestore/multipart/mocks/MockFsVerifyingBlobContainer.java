@@ -134,86 +134,28 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
     @Override
     public CompletableFuture<ReadContext> asyncBlobDownload(String blobName, boolean forceSingleStream) throws IOException {
 
-        ExecutorService executorService = Executors.newFixedThreadPool(4);
-        InputStream inputStream = readBlob(blobName);
-        long blobSize = inputStream.available();
-        int numStreams = 5;
-        inputStream.close();
+        final int numStreams = forceSingleStream ? 1 : 5;
+        final ExecutorService executorService = Executors.newFixedThreadPool(numStreams);
 
+        // Fetch blob metadata
+        final InputStream blobInputStream = readBlob(blobName);
+        final long blobSize = blobInputStream.available();
+        blobInputStream.close();
+
+        // Create input streams for the blob
         final List<InputStream> blobInputStreams = new ArrayList<>();
-
         long streamSize = (int) Math.ceil(blobSize * 1.0 / numStreams);
         for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
             long start = streamNumber * streamSize;
             blobInputStreams.add(readBlob(blobName, start, streamSize));
         }
 
-        CompletableFuture<ReadContext> readContextFuture =
-                CompletableFuture.supplyAsync(() -> new ReadContext(blobInputStreams, null, numStreams, blobSize), executorService);
+        CompletableFuture<ReadContext> readContextFuture = CompletableFuture.supplyAsync(
+                () -> new ReadContext(blobInputStreams, null, numStreams, blobSize),
+                executorService
+        );
         executorService.shutdown();
         return readContextFuture;
-
-//        int nParts = 10;
-//        long partSize = readContext.getFileSize() / nParts;
-//        StreamContext streamContext = readContext.getStreamProvider(partSize);
-//        Directory directory = readContext.getLocalDirectory();
-//
-//        byte[] buffer = new byte[(int) readContext.getFileSize()];
-//        AtomicLong totalContentRead = new AtomicLong();
-//        CountDownLatch latch = new CountDownLatch(streamContext.getNumberOfParts());
-//        for (int partIdx = 0; partIdx < streamContext.getNumberOfParts(); partIdx++) {
-//            int finalPartIdx = partIdx;
-//            Thread thread = new Thread(() -> {
-//                try {
-//                    InputStreamContainer inputStreamContainer = streamContext.provideStream(finalPartIdx);
-//                    InputStream inputStream = inputStreamContainer.getInputStream();
-//                    long remainingContentLength = inputStreamContainer.getContentLength();
-//                    long offset = partSize * finalPartIdx;
-//                    while (remainingContentLength > 0) {
-//                        int readContentLength = inputStream.read(buffer, (int) offset, (int) remainingContentLength);
-//                        totalContentRead.addAndGet(readContentLength);
-//                        remainingContentLength -= readContentLength;
-//                        offset += readContentLength;
-//                    }
-//                    inputStream.close();
-//                } catch (IOException e) {
-//                    completionListener.onFailure(e);
-//                } finally {
-//                    latch.countDown();
-//                }
-//            });
-//            thread.start();
-//        }
-//        try {
-//            if (!latch.await(TRANSFER_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
-//                throw new IOException("Timed out waiting for file transfer to complete for " + readContext.getFileName());
-//            }
-//        } catch (InterruptedException e) {
-//            throw new IOException("Await interrupted on CountDownLatch, transfer failed for " + readContext.getFileName());
-//        }
-//        logger.error("Buffer: {}", buffer);
-//        try (IndexOutput output = directory.createOutput(readContext.getFileName(), IOContext.DEFAULT)) {
-//            output.writeBytes(buffer, buffer.length);
-//        }
-//
-//        try {
-//            // bulks need to succeed for segment files to be generated
-//            if (isSegmentFile(readContext.getFileName()) && triggerDataIntegrityFailure) {
-//                completionListener.onFailure(
-//                    new RuntimeException(
-//                        new CorruptIndexException(
-//                            "Data integrity check failure for file: " + readContext.getFileName(),
-//                            readContext.getFileName()
-//                        )
-//                    )
-//                );
-//            } else {
-//                readContext.getDownloadFinalizer().accept(true);
-//                completionListener.onResponse(null);
-//            }
-//        } catch (Exception e) {
-//            completionListener.onFailure(e);
-//        }
     }
 
     private boolean isSegmentFile(String filename) {
