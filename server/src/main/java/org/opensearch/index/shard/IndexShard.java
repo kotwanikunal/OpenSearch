@@ -213,6 +213,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -2396,7 +2397,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             assert currentEngineReference.get() == null : "engine is running";
             verifyNotClosed();
             if (indexSettings.isRemoteStoreEnabled() && syncFromRemote) {
-                syncSegmentsFromRemoteSegmentStore(false, true, true, new PlainActionFuture<>());
+                syncSegmentsFromRemoteSegmentStore(false, true, true);
             }
             if (indexSettings.isRemoteTranslogStoreEnabled() && shardRouting.primary()) {
                 if (syncFromRemote) {
@@ -4578,57 +4579,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final long globalCheckpoint = getLastKnownGlobalCheckpoint();
         assert globalCheckpoint == getLastSyncedGlobalCheckpoint();
 
-//        ActionListener<Void> listener = new ActionListener<Void>() {
-//            @Override
-//            public void onResponse(Void unused) {
-//                try {
-//                    if (indexSettings.isRemoteTranslogStoreEnabled() && shardRouting.primary()) {
-//                        syncRemoteTranslogAndUpdateGlobalCheckpoint();
-//                    }
-//                    newEngineReference.set(engineFactory.newReadWriteEngine(newEngineConfig(replicationTracker)));
-//                    onNewEngine(newEngineReference.get());
-//
-//                    final TranslogRecoveryRunner translogRunner = (snapshot) -> runTranslogRecovery(
-//                        newEngineReference.get(),
-//                        snapshot,
-//                        Engine.Operation.Origin.LOCAL_RESET,
-//                        () -> {
-//                            // TODO: add a dedicate recovery stats for the reset translog
-//                        }
-//                    );
-//
-//                    // When the new engine is created, translogs are synced from remote store onto local. Since remote store is the source
-//                    // of truth for translog, we play all translogs that exists locally. Otherwise, the recoverUpto happens upto global
-//                    // checkpoint.
-//                    // We also replay all local translog ops with Segment replication, because on engine swap our local translog may
-//                    // hold more ops than the global checkpoint.
-//                    long recoverUpto = isRemoteTranslogEnabled() || indexSettings().isSegRepEnabled() ? Long.MAX_VALUE : globalCheckpoint;
-//                    newEngineReference.get()
-//                        .translogManager()
-//                        .recoverFromTranslog(translogRunner, newEngineReference.get().getProcessedLocalCheckpoint(), recoverUpto);
-//                    newEngineReference.get().refresh("reset_engine");
-//                    synchronized (engineMutex) {
-//                        verifyNotClosed();
-//                        IOUtils.close(currentEngineReference.getAndSet(newEngineReference.get()));
-//                        // We set active because we are now writing operations to the engine; this way,
-//                        // if we go idle after some time and become inactive, we still give sync'd flush a chance to run.
-//                        active.set(true);
-//                    }
-//                    // time elapses after the engine is created above (pulling the config settings) until we set the engine reference,
-//                    // during
-//                    // which settings changes could possibly have happened, so here we forcefully push any config changes to the new engine.
-//                    onSettingsChanged();
-//                } catch (IOException e) {
-//                    throw new UncheckedIOException(e);
-//                }
-//            }
-//
-//            @Override
-//            public void onFailure(Exception e) {
-//
-//            }
-//        };
-
         synchronized (engineMutex) {
             verifyNotClosed();
             // we must create both new read-only engine and new read-write engine under engineMutex to ensure snapshotStoreMetadata,
@@ -4676,7 +4626,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             };
             IOUtils.close(currentEngineReference.getAndSet(readOnlyEngine));
             if (indexSettings.isRemoteStoreEnabled()) {
-                syncSegmentsFromRemoteSegmentStore(false, true, true, new PlainActionFuture<>());
+                syncSegmentsFromRemoteSegmentStore(false, true, true);
             }
             if (indexSettings.isRemoteTranslogStoreEnabled() && shardRouting.primary()) {
                 syncRemoteTranslogAndUpdateGlobalCheckpoint();
@@ -4743,9 +4693,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     public void syncSegmentsFromRemoteSegmentStore(
         boolean overrideLocal,
         boolean refreshLevelSegmentSync,
-        boolean shouldCommit,
-        // This is unused. TODO: Remove if not needed going forward
-        ActionListener<Void> listener
+        boolean shouldCommit
     ) throws IOException {
         assert indexSettings.isRemoteStoreEnabled();
         logger.info("Downloading segments from remote segment store");
@@ -4776,10 +4724,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             // At this point, we need all the files to be downloaded before we can move ahead.
             Set<String> localSegmentFiles = Sets.newHashSet(storeDirectory.listAll());
-            CountDownLatch latch = new CountDownLatch(1);
-            ActionListener<Void> latchedListener = new LatchedActionListener<>(new PlainActionFuture<>(), latch);
-            copySegmentFiles(storeDirectory, remoteDirectory, null, uploadedSegments, overrideLocal, latchedListener);
-            latch.await();
+
+            copySegmentFiles(storeDirectory, remoteDirectory, null, uploadedSegments, overrideLocal);
 
             if (refreshLevelSegmentSync && remoteSegmentMetadata != null) {
                 try (
@@ -4827,86 +4773,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             }
         } catch (IOException e) {
             throw new IndexShardRecoveryException(shardId, "Exception while copying segment files from remote segment store", e);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } finally {
+        }  finally {
             store.decRef();
             remoteStore.decRef();
         }
-
-        /*
-         ActionListener<Void> internalListener = new ActionListener<>() {
-            @Override
-            public void onResponse(Void unused) {
-                try {
-                    Set<String> localSegmentFiles = Sets.newHashSet(storeDirectory.listAll());
-                    if (refreshLevelSegmentSync && remoteSegmentMetadata != null) {
-                        try (
-                            ChecksumIndexInput indexInput = new BufferedChecksumIndexInput(
-                                new ByteArrayIndexInput("Snapshot of SegmentInfos", remoteSegmentMetadata.getSegmentInfosBytes())
-                            );
-                        ) {
-                            SegmentInfos infosSnapshot = SegmentInfos.readCommit(
-                                store.directory(),
-                                indexInput,
-                                remoteSegmentMetadata.getGeneration()
-                            );
-                            if (shouldCommit) {
-                                long processedLocalCheckpoint = Long.parseLong(infosSnapshot.getUserData().get(LOCAL_CHECKPOINT_KEY));
-                                // Following code block makes sure to use SegmentInfosSnapshot in the remote store if generation differs
-                                // with local filesystem. If local filesystem already has segments_N+2 and infosSnapshot has generation N,
-                                // after commit, there would be 2 files that would be created segments_N+1 and segments_N+2. With the
-                                // policy of preserving only the latest commit, we will delete segments_N+1 which in fact is the part of the
-                                // latest
-                                // commit.
-                                Optional<String> localMaxSegmentInfos = localSegmentFiles.stream()
-                                    .filter(file -> file.startsWith(IndexFileNames.SEGMENTS))
-                                    .max(Comparator.comparingLong(SegmentInfos::generationFromSegmentsFileName));
-                                if (localMaxSegmentInfos.isPresent()
-                                    && infosSnapshot.getGeneration() < SegmentInfos.generationFromSegmentsFileName(
-                                        localMaxSegmentInfos.get()
-                                    ) - 1) {
-                                    // If remote translog is not enabled, local translog will be created with different UUID.
-                                    // This fails in Store.trimUnsafeCommits() as translog UUID of checkpoint and SegmentInfos needs
-                                    // to be same. Following code block make sure to have the same UUID.
-                                    if (indexSettings.isRemoteTranslogStoreEnabled() == false) {
-                                        SegmentInfos localSegmentInfos = store.readLastCommittedSegmentsInfo();
-                                        Map<String, String> userData = new HashMap<>(infosSnapshot.getUserData());
-                                        userData.put(TRANSLOG_UUID_KEY, localSegmentInfos.userData.get(TRANSLOG_UUID_KEY));
-                                        infosSnapshot.setUserData(userData, false);
-                                    }
-                                    storeDirectory.deleteFile(localMaxSegmentInfos.get());
-                                }
-                                store.commitSegmentInfos(infosSnapshot, processedLocalCheckpoint, processedLocalCheckpoint);
-                            } else {
-                                finalizeReplication(infosSnapshot);
-                            }
-                        }
-                    }
-                    listener.onResponse(unused);
-                } catch (Exception ex) {
-                    Exception exception = new IndexShardRecoveryException(
-                        shardId,
-                        "Exception while copying segment files from remote segment store",
-                        ex
-                    );
-                    onFailure(exception);
-                    listener.onFailure(exception);
-                } finally {
-                    store.decRef();
-                    remoteStore.decRef();
-                }
-
-            }
-
-            @Override
-            public void onFailure(Exception e) {
-
-            }
-        };
-
-        copySegmentFiles(storeDirectory, remoteDirectory, null, uploadedSegments, overrideLocal, internalListener);
-         */
     }
 
     /**
@@ -4936,15 +4806,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final Directory storeDirectory = store.directory();
         store.incRef();
 
-        // TODO: Convert this into a listener pattern
         try {
             String segmentsNFile = copySegmentFiles(
                 storeDirectory,
                 sourceRemoteDirectory,
                 remoteDirectory,
                 uploadedSegments,
-                overrideLocal,
-                null
+                overrideLocal
             );
             if (segmentsNFile != null) {
                 try (
@@ -4977,13 +4845,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         RemoteSegmentStoreDirectory sourceRemoteDirectory,
         RemoteSegmentStoreDirectory targetRemoteDirectory,
         Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments,
-        boolean overrideLocal,
-        ActionListener<Void> listener
+        boolean overrideLocal
     ) throws IOException {
         List<String> toDownloadSegments = new ArrayList<>();
         List<String> downloadedSegments = new ArrayList<>();
         List<String> skippedSegments = new ArrayList<>();
+        List<CompletableFuture<Boolean>> fileDownloadFutures = new ArrayList<>();
         String segmentNFile = null;
+
         try {
             Set<String> localSegmentFiles = Sets.newHashSet(storeDirectory.listAll());
             if (overrideLocal) {
@@ -4991,38 +4860,26 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     storeDirectory.deleteFile(file);
                 }
             }
+
             for (String file : uploadedSegments.keySet()) {
                 long checksum = Long.parseLong(uploadedSegments.get(file).getChecksum());
                 if (overrideLocal || localDirectoryContains(storeDirectory, file, checksum) == false) {
                     toDownloadSegments.add(file);
-                    ActionListener<Void> actionListener = new ActionListener<>() {
-                        @Override
-                        public void onResponse(Void unused) {
-                            try {
-                                storeDirectory.sync(Collections.singleton(file));
-                                downloadedSegments.add(file);
-                                if (toDownloadSegments.size() == downloadedSegments.size()) {
-                                    listener.onResponse(unused);
-                                }
-                            } catch (IOException e) {
-                                onFailure(e);
-                                throw new UncheckedIOException(e);
-                            }
-                        }
-
-                        @Override
-                        public void onFailure(Exception e) {
-                            logger.error("Exception when downloading segment: {}", e);
-                            // TODO: Add retry mechanism here
-                            listener.onFailure(e);
-                        }
-                    };
-                    sourceRemoteDirectory.copyTo(storeDirectory, file, IOContext.DEFAULT, actionListener);
-//                    storeDirectory.sync(Collections.singleton(file));
-//                    downloadedSegments.add(file);
+                    fileDownloadFutures.add(sourceRemoteDirectory.copyTo(storeDirectory, file, IOContext.DEFAULT)
+                            .thenApply(ignored -> downloadedSegments.add(file)));
                 } else {
                     skippedSegments.add(file);
                 }
+            }
+
+            CompletableFuture.allOf(fileDownloadFutures.toArray(new CompletableFuture[0])).join();
+
+            if (downloadedSegments.size() != toDownloadSegments.size()) {
+                // Not all files were downloaded.
+            }
+
+
+            for (String file : uploadedSegments.keySet()) {
                 if (targetRemoteDirectory != null) {
                     targetRemoteDirectory.copyFrom(storeDirectory, file, file, IOContext.DEFAULT);
                 }
@@ -5032,9 +4889,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 }
             }
         } finally {
-            if (toDownloadSegments.isEmpty()) {
-                listener.onResponse(null);
-            }
             logger.info("Downloaded segments here: {}", downloadedSegments);
             logger.info("Skipped download for segments here: {}", skippedSegments);
         }

@@ -54,6 +54,7 @@ import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.unit.ByteSizeUnit;
 import org.opensearch.common.unit.ByteSizeValue;
+import org.opensearch.repositories.s3.async.DownloadRequest;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
@@ -65,10 +66,13 @@ import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
+import software.amazon.awssdk.services.s3.model.GetObjectAttributesRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectAttributesResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.ObjectAttributes;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Error;
@@ -90,6 +94,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -212,8 +217,47 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
     }
 
     @Override
-    public void asyncBlobDownload(ReadContext writeContext, ActionListener<Void> completionListener) throws IOException {
+    public CompletableFuture<ReadContext> asyncBlobDownload(String blobName, boolean forceSingleStream) throws IOException {
+        try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {
+            S3AsyncClient s3AsyncClient = amazonS3Reference.get().client();
 
+            GetObjectAttributesRequest getObjectAttributesRequest = GetObjectAttributesRequest.builder()
+                .bucket(blobStore.bucket())
+                .key(blobName)
+                .objectAttributes(ObjectAttributes.CHECKSUM, ObjectAttributes.OBJECT_SIZE, ObjectAttributes.OBJECT_PARTS)
+                .build();
+
+            GetObjectAttributesResponse getObject = s3AsyncClient.getObjectAttributes(getObjectAttributesRequest).join();
+
+            final long blobSize = getObject.objectSize();
+            final List<CompletableFuture<InputStream>> blobInputStreamsFuture = new ArrayList<>();
+            final List<InputStream> blobInputStreams = new ArrayList<>();
+            final int numStreams;
+
+            if (forceSingleStream) {
+                numStreams = 1;
+                DownloadRequest downloadRequest = new DownloadRequest(blobStore.bucket(), blobName, blobSize);
+                blobInputStreamsFuture.add(blobStore.getAsyncTransferManager().downloadObjectFutureStream(s3AsyncClient, downloadRequest)
+                    // TODO: Add error handling
+                    .whenComplete((data, error) -> blobInputStreams.add(data)));
+            } else {
+                final long optimalStreamSize = 8 * 1024 * 1024; // TODO: Replace this with configurable value
+                numStreams = (int) Math.ceil(blobSize * 1.0 / optimalStreamSize);
+
+                for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
+                    long start = streamNumber * optimalStreamSize;
+                    long end = Math.min(blobSize, (streamNumber + 1) * optimalStreamSize) - 1;
+                    DownloadRequest downloadRequest = new DownloadRequest(blobStore.bucket(), blobName, blobSize, start, end);
+                    blobInputStreamsFuture.add(blobStore.getAsyncTransferManager().downloadObjectFutureStream(s3AsyncClient, downloadRequest)
+                        // TODO: Add error handling
+                        .whenComplete((data, error) -> blobInputStreams.add(data)));
+                }
+            }
+
+            // TODO: Add error handling
+            return CompletableFuture.allOf(blobInputStreamsFuture.toArray(new CompletableFuture[0]))
+                .thenCompose(ignored -> CompletableFuture.supplyAsync(() -> new ReadContext(blobInputStreams, null, numStreams, blobSize)));
+        }
     }
 
     // package private for testing
@@ -398,16 +442,16 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
     public Map<String, BlobContainer> children() throws IOException {
         try (AmazonS3Reference clientReference = blobStore.clientReference()) {
             return executeListing(clientReference, listObjectsRequest(keyPath)).stream().flatMap(listObjectsResponse -> {
-                assert listObjectsResponse.contents().stream().noneMatch(s -> {
-                    for (CommonPrefix commonPrefix : listObjectsResponse.commonPrefixes()) {
-                        if (s.key().substring(keyPath.length()).startsWith(commonPrefix.prefix())) {
-                            return true;
+                    assert listObjectsResponse.contents().stream().noneMatch(s -> {
+                        for (CommonPrefix commonPrefix : listObjectsResponse.commonPrefixes()) {
+                            if (s.key().substring(keyPath.length()).startsWith(commonPrefix.prefix())) {
+                                return true;
+                            }
                         }
-                    }
-                    return false;
-                }) : "Response contained children for listed common prefixes.";
-                return listObjectsResponse.commonPrefixes().stream();
-            })
+                        return false;
+                    }) : "Response contained children for listed common prefixes.";
+                    return listObjectsResponse.commonPrefixes().stream();
+                })
                 .map(commonPrefix -> commonPrefix.prefix().substring(keyPath.length()))
                 .filter(name -> name.isEmpty() == false)
                 // Stripping the trailing slash off of the common prefix

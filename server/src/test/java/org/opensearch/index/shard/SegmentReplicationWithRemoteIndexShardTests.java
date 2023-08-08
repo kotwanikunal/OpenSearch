@@ -37,7 +37,7 @@ public class SegmentReplicationWithRemoteIndexShardTests extends OpenSearchIndex
         assertDocs(primaryShard, "1", "2");
         flushShard(primaryShard);
 
-        replicaShard.syncSegmentsFromRemoteSegmentStore(true, true, false, new PlainActionFuture<>());
+        replicaShard.syncSegmentsFromRemoteSegmentStore(true, true, false);
         assertDocs(replicaShard, "1", "2");
         closeShards(primaryShard, replicaShard);
     }

@@ -8,13 +8,8 @@
 
 package org.opensearch.common.blobstore.stream.read;
 
-import org.apache.lucene.store.Directory;
-import org.opensearch.common.CheckedConsumer;
-import org.opensearch.common.Nullable;
-import org.opensearch.common.StreamContext;
-import org.opensearch.common.blobstore.stream.write.StreamContextSupplier;
-
-import java.io.IOException;
+import java.io.InputStream;
+import java.util.List;
 
 /**
  * WriteContext is used to encapsulate all data needed by <code>BlobContainer#readStreams</code>
@@ -22,62 +17,34 @@ import java.io.IOException;
  * @opensearch.internal
  */
 public class ReadContext {
+    private final List<InputStream> blobInputStreams;
 
-    private final String fileName;
-    private final String remoteFileName;
-    private final CheckedConsumer<Boolean, IOException> downloadFinalizer;
-    private final boolean doRemoteDataIntegrityCheck;
-    private Directory localDirectory;
+    private final String blobChecksum;
 
-    /**
-     * Construct a new WriteContext object
-     *
-     * @param fileName                   The name of the file being downloaded
-     * @param doRemoteDataIntegrityCheck A boolean to inform vendor plugins whether remote data integrity checks need to be done
-     */
-    public ReadContext(
-        String remoteFileName,
-        String fileName,
-        CheckedConsumer<Boolean, IOException> downloadFinalizer,
-        boolean doRemoteDataIntegrityCheck
-    ) {
-        this.remoteFileName = remoteFileName;
-        this.fileName = fileName;
-        this.downloadFinalizer = downloadFinalizer;
-        this.doRemoteDataIntegrityCheck = doRemoteDataIntegrityCheck;
+    private final int numStreams;
+
+    private final long blobSize;
+
+    public ReadContext(List<InputStream> blobInputStreams, String blobChecksum, int numStreams, long blobSize) {
+        this.blobInputStreams = blobInputStreams;
+        this.blobChecksum = blobChecksum;
+        this.numStreams = numStreams;
+        this.blobSize = blobSize;
     }
 
-    public void setLocalDirectory(Directory directory) {
-        this.localDirectory = directory;
+    public List<InputStream> getBlobInputStreams() {
+        return blobInputStreams;
     }
 
-    public Directory getLocalDirectory() {
-        return this.localDirectory;
+    public String getBlobChecksum() {
+        return blobChecksum;
     }
 
-    /**
-     * @return The file name
-     */
-    public String getFileName() {
-        return fileName;
+    public int getNumStreams() {
+        return numStreams;
     }
 
-    public String getRemoteFileName() {
-        return remoteFileName;
+    public long getBlobSize() {
+        return blobSize;
     }
-
-    /**
-     * @return The <code>UploadFinalizer</code> for this upload
-     */
-    public CheckedConsumer<Boolean, IOException> getDownloadFinalizer() {
-        return downloadFinalizer;
-    }
-
-    /**
-     * @return A boolean for whether remote data integrity check has to be done for this upload or not
-     */
-    public boolean doRemoteDataIntegrityCheck() {
-        return doRemoteDataIntegrityCheck;
-    }
-
 }

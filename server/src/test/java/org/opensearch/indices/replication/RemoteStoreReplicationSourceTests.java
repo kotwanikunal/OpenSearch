@@ -191,8 +191,7 @@ public class RemoteStoreReplicationSourceTests extends OpenSearchIndexLevelRepli
             .syncSegmentsFromRemoteSegmentStore(
                 Mockito.anyBoolean(),
                 Mockito.anyBoolean(),
-                Mockito.anyBoolean(),
-                new PlainActionFuture<>()
+                Mockito.anyBoolean()
             );
         assertThrows(ExecutionException.class, () -> {
             final PlainActionFuture<GetSegmentFilesResponse> res = PlainActionFuture.newFuture();

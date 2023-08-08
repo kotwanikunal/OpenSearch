@@ -108,18 +108,6 @@ public class RemoteTransferContainer implements Closeable {
         );
     }
 
-    /**
-     * @return The {@link ReadContext} for the current download
-     */
-    public ReadContext createReadContext() {
-        return new ReadContext(
-            remoteFileName,
-            fileName,
-            this::finalizeUpload,
-            isRemoteDataIntegrityCheckPossible()
-        );
-    }
-
     // package-private for testing
 
     /**
@@ -164,10 +152,6 @@ public class RemoteTransferContainer implements Closeable {
      */
     public interface OffsetRangeInputStreamSupplier {
         OffsetRangeInputStream get(long size, long position) throws IOException;
-    }
-
-    public interface InputStreamSupplier {
-        InputStream get(long size, long position) throws IOException;
     }
 
     interface LocalStreamSupplier<Stream> {

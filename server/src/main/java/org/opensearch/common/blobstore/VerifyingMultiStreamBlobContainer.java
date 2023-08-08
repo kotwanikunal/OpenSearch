@@ -13,6 +13,8 @@ import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 
 /**
  * An extension of {@link BlobContainer} that adds {@link VerifyingMultiStreamBlobContainer#asyncBlobUpload} to allow
@@ -33,14 +35,5 @@ public interface VerifyingMultiStreamBlobContainer extends BlobContainer {
      */
     void asyncBlobUpload(WriteContext writeContext, ActionListener<Void> completionListener) throws IOException;
 
-    /**
-     * Reads blob content from multiple streams, each from a specific part of the file, which is provided by the
-     * StreamContextSupplier in the WriteContext passed to this method. An {@link IOException} is thrown if reading
-     * any of the input streams fails, or writing to the target blob fails
-     *
-     * @param writeContext         A WriteContext object encapsulating all information needed to perform the upload
-     * @param completionListener   Listener on which upload events should be published.
-     * @throws IOException if any of the input streams could not be read, or the target blob could not be written to
-     */
-    void asyncBlobDownload(ReadContext writeContext, ActionListener<Void> completionListener) throws IOException;
+    CompletableFuture<ReadContext> asyncBlobDownload(String blobName, boolean forceSingleStream) throws IOException;
 }
