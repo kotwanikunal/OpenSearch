@@ -47,7 +47,6 @@ public class RemoteTransferContainer implements Closeable {
     private final long expectedChecksum;
     private final OffsetRangeInputStreamSupplier offsetRangeInputStreamSupplier;
     private final boolean isRemoteDataIntegritySupported;
-    private final Path localStorePath;
 
     private static final Logger log = LogManager.getLogger(RemoteTransferContainer.class);
 
@@ -81,15 +80,6 @@ public class RemoteTransferContainer implements Closeable {
         this.offsetRangeInputStreamSupplier = offsetRangeInputStreamSupplier;
         this.expectedChecksum = expectedChecksum;
         this.isRemoteDataIntegritySupported = isRemoteDataIntegritySupported;
-        this.localStorePath = null;
-    }
-
-    public RemoteTransferContainer(
-        String fileName,
-        String remoteFileName,
-        boolean isRemoteDataIntegritySupported
-    ) {
-        this(fileName, remoteFileName, -1L, false, null, null, -1L, isRemoteDataIntegritySupported);
     }
 
     /**
@@ -165,12 +155,10 @@ public class RemoteTransferContainer implements Closeable {
     ) {
         return () -> {
             try {
-                InputStream inputStream;
                 OffsetRangeInputStream offsetRangeInputStream = offsetRangeInputStreamSupplier.get(size, position);
-                inputStream = !isRemoteDataIntegrityCheckPossible()
+                InputStream inputStream = !isRemoteDataIntegrityCheckPossible()
                     ? new ResettableCheckedInputStream(offsetRangeInputStream, fileName)
                     : offsetRangeInputStream;
-
                 Objects.requireNonNull(inputStreams.get())[streamIdx] = inputStream;
 
                 return new InputStreamContainer(inputStream, size, position);
