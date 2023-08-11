@@ -25,6 +25,7 @@ import org.apache.lucene.store.IndexOutput;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.ActionListener;
 import org.opensearch.action.support.PlainActionFuture;
+import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.exception.CorruptFileException;
@@ -36,6 +37,7 @@ import org.opensearch.common.blobstore.transfer.stream.OffsetRangeIndexInputStre
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.util.ByteUtils;
+import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.index.remote.RemoteStoreUtils;
 import org.opensearch.index.store.exception.ChecksumCombinationException;
 import org.opensearch.index.store.lockmanager.FileLockInfo;
@@ -48,6 +50,7 @@ import org.opensearch.threadpool.ThreadPool;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -433,39 +436,45 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
     private CompletableFuture<Void> downloadBlob(Directory to, String localFileName, IOContext ioContext) {
         final String remoteFileName = getExistingRemoteFilename(localFileName);
-        CompletableFuture<ReadContext> readContextFuture = null;
+        PlainActionFuture<ReadContext> completionListener = new PlainActionFuture<>();
         try {
-            readContextFuture = ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).asyncBlobDownload(remoteFileName, false);
+            ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).asyncBlobDownload(remoteFileName, false, completionListener);
         } catch (IOException e) {
-
+            throw new RuntimeException(e);
         }
+
+        CompletableFuture<ReadContext> readContextFuture = CompletableFuture.supplyAsync(completionListener::actionGet);
 
 
         CompletableFuture<Void> completableFuture = readContextFuture.thenCompose(readContext -> CompletableFuture.runAsync(() -> {
             List<InputStream> blobInputStreams = readContext.getBlobInputStreams();
             List<String> partFileNames = new ArrayList<>();
             for (int streamNumber = 0; streamNumber < blobInputStreams.size(); streamNumber++) {
-                String partFileName = localFileName + "__" + streamNumber;
-                partFileNames.add(partFileName);
 
-                try (InputStream inputStream = blobInputStreams.get(streamNumber); IndexOutput indexOutput = to.createOutput(partFileName, ioContext)){
-                    // TODO: Buffer logic instead?
-                    byte[] data = inputStream.readAllBytes();
-                    indexOutput.writeBytes(data, data.length);
+
+                try (InputStream inputStream = blobInputStreams.get(streamNumber);
+                     IndexOutput indexOutput = to.createTempOutput(localFileName, Integer.toString(streamNumber), ioContext)){
+
+                    byte[] buffer = new byte[inputStream.available()];
+                    while ((inputStream.read(buffer)) != -1) {
+                        indexOutput.writeBytes(buffer, 0, buffer.length);
+                    }
+
+                    partFileNames.add(indexOutput.getName());
                 } catch (IOException e) {
                     // TODO: Error handling
                 }
             }
-            postDownload(to, localFileName, partFileNames);
+            postDownload(to, localFileName, ioContext, partFileNames);
         }, threadPool.generic()));
 
         return completableFuture;
     }
 
-    private void postDownload(Directory segmentDirectory, String fileName, List<String> partFileNames) {
-        try (IndexOutput segmentOutput = segmentDirectory.createOutput(fileName, IOContext.DEFAULT)) {
+    private void postDownload(Directory segmentDirectory, String fileName, IOContext ioContext, List<String> partFileNames) {
+        try (IndexOutput segmentOutput = segmentDirectory.createOutput(fileName, ioContext)) {
             for (String partFileName : partFileNames) {
-                try (IndexInput indexInput = segmentDirectory.openInput(partFileName, IOContext.DEFAULT)) {
+                try (IndexInput indexInput = segmentDirectory.openInput(partFileName, ioContext)) {
                     for (int i = 0; i < indexInput.length(); i++) {
                         segmentOutput.writeByte(indexInput.readByte());
                     }

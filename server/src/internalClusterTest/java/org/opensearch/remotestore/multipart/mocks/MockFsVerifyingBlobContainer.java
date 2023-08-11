@@ -132,10 +132,9 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
     }
 
     @Override
-    public CompletableFuture<ReadContext> asyncBlobDownload(String blobName, boolean forceSingleStream) throws IOException {
+    public void asyncBlobDownload(String blobName, boolean forceSingleStream, ActionListener<ReadContext> listener) throws IOException {
 
         final int numStreams = forceSingleStream ? 1 : 5;
-        final ExecutorService executorService = Executors.newFixedThreadPool(numStreams);
 
         // Fetch blob metadata
         final InputStream blobInputStream = readBlob(blobName);
@@ -150,12 +149,7 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
             blobInputStreams.add(readBlob(blobName, start, streamSize));
         }
 
-        CompletableFuture<ReadContext> readContextFuture = CompletableFuture.supplyAsync(
-                () -> new ReadContext(blobInputStreams, null, numStreams, blobSize),
-                executorService
-        );
-        executorService.shutdown();
-        return readContextFuture;
+        listener.onResponse(new ReadContext(blobInputStreams, null, numStreams, blobSize));
     }
 
     private boolean isSegmentFile(String filename) {
