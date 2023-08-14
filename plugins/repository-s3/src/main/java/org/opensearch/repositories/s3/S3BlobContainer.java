@@ -216,49 +216,49 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
         }
     }
 
-    @Override
-    public CompletableFuture<ReadContext> asyncBlobDownload(String blobName, boolean forceSingleStream) throws IOException {
-        try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {
-            S3AsyncClient s3AsyncClient = amazonS3Reference.get().client();
-
-            GetObjectAttributesRequest getObjectAttributesRequest = GetObjectAttributesRequest.builder()
-                .bucket(blobStore.bucket())
-                .key(blobName)
-                .objectAttributes(ObjectAttributes.CHECKSUM, ObjectAttributes.OBJECT_SIZE, ObjectAttributes.OBJECT_PARTS)
-                .build();
-
-            GetObjectAttributesResponse getObject = s3AsyncClient.getObjectAttributes(getObjectAttributesRequest).join();
-
-            final long blobSize = getObject.objectSize();
-            final List<CompletableFuture<InputStream>> blobInputStreamsFuture = new ArrayList<>();
-            final List<InputStream> blobInputStreams = new ArrayList<>();
-            final int numStreams;
-
-            if (forceSingleStream) {
-                numStreams = 1;
-                DownloadRequest downloadRequest = new DownloadRequest(blobStore.bucket(), blobName, blobSize);
-                blobInputStreamsFuture.add(blobStore.getAsyncTransferManager().downloadObjectFutureStream(s3AsyncClient, downloadRequest)
-                    // TODO: Add error handling
-                    .whenComplete((data, error) -> blobInputStreams.add(data)));
-            } else {
-                final long optimalStreamSize = 8 * 1024 * 1024; // TODO: Replace this with configurable value
-                numStreams = (int) Math.ceil(blobSize * 1.0 / optimalStreamSize);
-
-                for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
-                    long start = streamNumber * optimalStreamSize;
-                    long end = Math.min(blobSize, (streamNumber + 1) * optimalStreamSize) - 1;
-                    DownloadRequest downloadRequest = new DownloadRequest(blobStore.bucket(), blobName, blobSize, start, end);
-                    blobInputStreamsFuture.add(blobStore.getAsyncTransferManager().downloadObjectFutureStream(s3AsyncClient, downloadRequest)
-                        // TODO: Add error handling
-                        .whenComplete((data, error) -> blobInputStreams.add(data)));
-                }
-            }
-
-            // TODO: Add error handling
-            return CompletableFuture.allOf(blobInputStreamsFuture.toArray(new CompletableFuture[0]))
-                .thenCompose(ignored -> CompletableFuture.supplyAsync(() -> new ReadContext(blobInputStreams, null, numStreams, blobSize)));
-        }
-    }
+//    @Override
+//    public CompletableFuture<ReadContext> asyncBlobDownload(String blobName, boolean forceSingleStream) throws IOException {
+//        try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {
+//            S3AsyncClient s3AsyncClient = amazonS3Reference.get().client();
+//
+//            GetObjectAttributesRequest getObjectAttributesRequest = GetObjectAttributesRequest.builder()
+//                .bucket(blobStore.bucket())
+//                .key(blobName)
+//                .objectAttributes(ObjectAttributes.CHECKSUM, ObjectAttributes.OBJECT_SIZE, ObjectAttributes.OBJECT_PARTS)
+//                .build();
+//
+//            GetObjectAttributesResponse getObject = s3AsyncClient.getObjectAttributes(getObjectAttributesRequest).join();
+//
+//            final long blobSize = getObject.objectSize();
+//            final List<CompletableFuture<InputStream>> blobInputStreamsFuture = new ArrayList<>();
+//            final List<InputStream> blobInputStreams = new ArrayList<>();
+//            final int numStreams;
+//
+//            if (forceSingleStream) {
+//                numStreams = 1;
+//                DownloadRequest downloadRequest = new DownloadRequest(blobStore.bucket(), blobName, blobSize);
+//                blobInputStreamsFuture.add(blobStore.getAsyncTransferManager().downloadObjectFutureStream(s3AsyncClient, downloadRequest)
+//                    // TODO: Add error handling
+//                    .whenComplete((data, error) -> blobInputStreams.add(data)));
+//            } else {
+//                final long optimalStreamSize = 8 * 1024 * 1024; // TODO: Replace this with configurable value
+//                numStreams = (int) Math.ceil(blobSize * 1.0 / optimalStreamSize);
+//
+//                for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
+//                    long start = streamNumber * optimalStreamSize;
+//                    long end = Math.min(blobSize, (streamNumber + 1) * optimalStreamSize) - 1;
+//                    DownloadRequest downloadRequest = new DownloadRequest(blobStore.bucket(), blobName, blobSize, start, end);
+//                    blobInputStreamsFuture.add(blobStore.getAsyncTransferManager().downloadObjectFutureStream(s3AsyncClient, downloadRequest)
+//                        // TODO: Add error handling
+//                        .whenComplete((data, error) -> blobInputStreams.add(data)));
+//                }
+//            }
+//
+//            // TODO: Add error handling
+//            return CompletableFuture.allOf(blobInputStreamsFuture.toArray(new CompletableFuture[0]))
+//                .thenCompose(ignored -> CompletableFuture.supplyAsync(() -> new ReadContext(blobInputStreams, null, numStreams, blobSize)));
+//        }
+//    }
 
     // package private for testing
     long getLargeBlobThresholdInBytes() {

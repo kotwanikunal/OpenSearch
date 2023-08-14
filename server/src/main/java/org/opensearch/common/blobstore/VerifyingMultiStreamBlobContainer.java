@@ -9,10 +9,12 @@
 package org.opensearch.common.blobstore;
 
 import org.opensearch.action.ActionListener;
+import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 
@@ -42,9 +44,15 @@ public interface VerifyingMultiStreamBlobContainer extends BlobContainer {
      * An {@link IOException} is thrown if requesting any of the input streams fails, or reading metadata for the
      * requested blob fails
      * @param blobName          Name of the blob to be read using the async mechanism
-     * @param forceSingleStream Value to denote forced use of a single stream within the returned object
      * @param listener  Async listener for {@link ReadContext} object which serves the input streams and other metadata for the blob
      * @throws IOException if any of the input streams could not be requested, or reading metadata for requested blob fails
      */
-    void asyncBlobDownload(String blobName, boolean forceSingleStream, ActionListener<ReadContext> listener) throws IOException;
+
+    default void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) throws IOException {
+        try {
+            listener.onResponse(readBlob(blobName, position, length));
+        } catch (IOException exception) {
+            listener.onFailure(exception);
+        }
+    }
 }

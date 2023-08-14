@@ -4660,7 +4660,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             // At this point, we need all the files to be downloaded before we can move ahead.
             Set<String> localSegmentFiles = Sets.newHashSet(storeDirectory.listAll());
 
-            copySegmentFiles(storeDirectory, remoteDirectory, null, uploadedSegments, overrideLocal);
+            CountDownLatch completionLatch = new CountDownLatch(1);
+            LatchedActionListener<Void> completionListener = new LatchedActionListener<>(new PlainActionFuture<Void>(), completionLatch);
+            copySegmentFiles(storeDirectory, remoteDirectory, null, uploadedSegments, overrideLocal, completionListener);
+            completionLatch.await();
 
             if (refreshLevelSegmentSync && remoteSegmentMetadata != null) {
                 try (
@@ -4706,9 +4709,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     }
                 }
             }
-        } catch (IOException e) {
+        } catch (IOException | InterruptedException e) {
             throw new IndexShardRecoveryException(shardId, "Exception while copying segment files from remote segment store", e);
-        }  finally {
+        } finally {
             store.decRef();
             remoteStore.decRef();
         }
@@ -4747,7 +4750,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 sourceRemoteDirectory,
                 remoteDirectory,
                 uploadedSegments,
-                overrideLocal
+                overrideLocal,
+                new PlainActionFuture<>()
             );
             if (segmentsNFile != null) {
                 try (
@@ -4780,12 +4784,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         RemoteSegmentStoreDirectory sourceRemoteDirectory,
         RemoteSegmentStoreDirectory targetRemoteDirectory,
         Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments,
-        boolean overrideLocal
+        boolean overrideLocal,
+        ActionListener<Void> completionListener
     ) throws IOException {
-        List<String> toDownloadSegments = new ArrayList<>();
-        List<String> downloadedSegments = new ArrayList<>();
-        List<String> skippedSegments = new ArrayList<>();
-        List<CompletableFuture<Boolean>> fileDownloadFutures = new ArrayList<>();
+        Set<String> toDownloadSegments = new HashSet<>();
+        Set<String> downloadedSegments = new HashSet<>();
+        Set<String> skippedSegments = new HashSet<>();
         String segmentNFile = null;
 
         try {
@@ -4798,31 +4802,49 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             for (String file : uploadedSegments.keySet()) {
                 long checksum = Long.parseLong(uploadedSegments.get(file).getChecksum());
+
                 if (overrideLocal || localDirectoryContains(storeDirectory, file, checksum) == false) {
                     toDownloadSegments.add(file);
-                    fileDownloadFutures.add(sourceRemoteDirectory.copyTo(storeDirectory, file, IOContext.DEFAULT)
-                            .thenApply(ignored -> downloadedSegments.add(file)));
                 } else {
                     skippedSegments.add(file);
-                }
-            }
-
-            CompletableFuture.allOf(fileDownloadFutures.toArray(new CompletableFuture[0])).join();
-
-            if (downloadedSegments.size() != toDownloadSegments.size()) {
-                // Not all files were downloaded.
-            }
-
-
-            for (String file : uploadedSegments.keySet()) {
-                if (targetRemoteDirectory != null) {
-                    targetRemoteDirectory.copyFrom(storeDirectory, file, file, IOContext.DEFAULT);
                 }
                 if (file.startsWith(IndexFileNames.SEGMENTS)) {
                     assert segmentNFile == null : "There should be only one SegmentInfosSnapshot file";
                     segmentNFile = file;
                 }
             }
+
+            ActionListener<String> filesDownloadListener = new ActionListener<>() {
+                @Override
+                public void onResponse(String fileName) {
+                    try {
+                        downloadedSegments.add(fileName);
+                        if (targetRemoteDirectory != null) {
+                            targetRemoteDirectory.copyFrom(storeDirectory, fileName, fileName, IOContext.DEFAULT);
+                        }
+                        if (downloadedSegments.containsAll(toDownloadSegments)) {
+                            completionListener.onResponse(null);
+                        }
+                    } catch (IOException ex) {
+                        // TODO: Error Handling and Retry for individual file
+                    }
+                    completionListener.onResponse(null);
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    // TODO: Error Handling and Retry for individual file
+                    completionListener.onFailure(e);
+                }
+            };
+
+            if (toDownloadSegments.isEmpty()) {
+                completionListener.onResponse(null);
+            }
+
+            toDownloadSegments.forEach(file ->
+                    sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), IOContext.DEFAULT, filesDownloadListener));
+
         } finally {
             logger.info("Downloaded segments here: {}", downloadedSegments);
             logger.info("Skipped download for segments here: {}", skippedSegments);

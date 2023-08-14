@@ -131,26 +131,26 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
 
     }
 
-    @Override
-    public void asyncBlobDownload(String blobName, boolean forceSingleStream, ActionListener<ReadContext> listener) throws IOException {
-
-        final int numStreams = forceSingleStream ? 1 : 5;
-
-        // Fetch blob metadata
-        final InputStream blobInputStream = readBlob(blobName);
-        final long blobSize = blobInputStream.available();
-        blobInputStream.close();
-
-        // Create input streams for the blob
-        final List<InputStream> blobInputStreams = new ArrayList<>();
-        long streamSize = (int) Math.ceil(blobSize * 1.0 / numStreams);
-        for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
-            long start = streamNumber * streamSize;
-            blobInputStreams.add(readBlob(blobName, start, streamSize));
-        }
-
-        listener.onResponse(new ReadContext(blobInputStreams, null, numStreams, blobSize));
-    }
+//    @Override
+//    public void readBlobAsync(String blobName, boolean forceSingleStream, ActionListener<ReadContext> listener) throws IOException {
+//
+//        final int numStreams = forceSingleStream ? 1 : 5;
+//
+//        // Fetch blob metadata
+//        final InputStream blobInputStream = readBlob(blobName);
+//        final long blobSize = blobInputStream.available();
+//        blobInputStream.close();
+//
+//        // Create input streams for the blob
+//        final List<InputStream> blobInputStreams = new ArrayList<>();
+//        long streamSize = (int) Math.ceil(blobSize * 1.0 / numStreams);
+//        for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
+//            long start = streamNumber * streamSize;
+//            blobInputStreams.add(readBlob(blobName, start, streamSize));
+//        }
+//
+//        listener.onResponse(new ReadContext(blobInputStreams, null, numStreams, blobSize));
+//    }
 
     private boolean isSegmentFile(String filename) {
         return !filename.endsWith(".tlog") && !filename.endsWith(".ckp");

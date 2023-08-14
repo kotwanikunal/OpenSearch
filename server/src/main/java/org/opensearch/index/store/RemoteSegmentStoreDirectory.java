@@ -62,9 +62,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.zip.CRC32;
@@ -425,50 +427,102 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * @param src      name of the file
      * @param context  context for the IO operation
      */
-    public CompletableFuture<Void> copyTo(Directory to, String src, IOContext context) {
-        CompletableFuture<Void> future = downloadBlob(to, src, context)
-                .exceptionally(throwable -> {
-                    logger.warn(() -> new ParameterizedMessage("Exception while downloading file {} to the local segment store", src), throwable);
-                    return null;
-                });
-        return future;
+    public void copyTo(Directory to, String src, long blobLength, IOContext context, ActionListener<String> fileListener) {
+        downloadBlob(to, src, blobLength, context, fileListener);
+//        CompletableFuture<Void> future = downloadBlob(to, src, context)
+//                .exceptionally(throwable -> {
+//                    logger.warn(() -> new ParameterizedMessage("Exception while downloading file {} to the local segment store", src), throwable);
+//                    return null;
+//                });
+//        return future;
     }
 
-    private CompletableFuture<Void> downloadBlob(Directory to, String localFileName, IOContext ioContext) {
+    private void downloadBlob(Directory to, String localFileName, long blobSize, IOContext ioContext, ActionListener<String> fileListener) {
         final String remoteFileName = getExistingRemoteFilename(localFileName);
-        PlainActionFuture<ReadContext> completionListener = new PlainActionFuture<>();
-        try {
-            ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).asyncBlobDownload(remoteFileName, false, completionListener);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+
+        List<String> partFileNames = new ArrayList<>();
+        final long optimalStreamSize = 8; // TODO: Replace this with configurable value
+        final int numStreams = (int) Math.ceil(blobSize * 1.0 / optimalStreamSize);
+
+        AtomicInteger atomicInteger = new AtomicInteger(numStreams);
+
+
+        for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
+            long start = streamNumber * optimalStreamSize;
+            long end = Math.min(blobSize, ((streamNumber + 1) * optimalStreamSize));
+            long length = end - start;
+
+            int finalStreamNumber = streamNumber;
+            String partFileName = localFileName + "__" + Integer.toString(finalStreamNumber);
+            partFileNames.add(partFileName);
+
+            ActionListener<InputStream> streamListener = new ActionListener<>() {
+                @Override
+                public void onResponse(InputStream inputStream) {
+                    try (IndexOutput segmentOutput = to.createOutput(partFileName, ioContext); inputStream) {
+                        byte[] buffer = new byte[inputStream.available()];
+                        while ((inputStream.read(buffer)) != -1) {
+                            segmentOutput.writeBytes(buffer, 0, buffer.length);
+                        }
+                    } catch (IOException ex) {
+                        // TODO: Stream error handling
+                    }
+                    atomicInteger.decrementAndGet();
+                    if(atomicInteger.get() == 0) {
+                        postDownload(to, localFileName, ioContext, partFileNames);
+                        fileListener.onResponse(localFileName);
+                    }
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+
+                }
+            };
+
+            try {
+                ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).readBlobAsync(remoteFileName, start, length, streamListener);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
 
-        CompletableFuture<ReadContext> readContextFuture = CompletableFuture.supplyAsync(completionListener::actionGet);
 
 
-        CompletableFuture<Void> completableFuture = readContextFuture.thenCompose(readContext -> CompletableFuture.runAsync(() -> {
-            List<InputStream> blobInputStreams = readContext.getBlobInputStreams();
-            List<String> partFileNames = new ArrayList<>();
-            for (int streamNumber = 0; streamNumber < blobInputStreams.size(); streamNumber++) {
-
-
-                try (InputStream inputStream = blobInputStreams.get(streamNumber);
-                     IndexOutput indexOutput = to.createTempOutput(localFileName, Integer.toString(streamNumber), ioContext)){
-
-                    byte[] buffer = new byte[inputStream.available()];
-                    while ((inputStream.read(buffer)) != -1) {
-                        indexOutput.writeBytes(buffer, 0, buffer.length);
-                    }
-
-                    partFileNames.add(indexOutput.getName());
-                } catch (IOException e) {
-                    // TODO: Error handling
-                }
-            }
-            postDownload(to, localFileName, ioContext, partFileNames);
-        }, threadPool.generic()));
-
-        return completableFuture;
+        // Code for future
+//        PlainActionFuture<ReadContext> completionListener = new PlainActionFuture<>();
+//        try {
+//            ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).asyncBlobDownload(remoteFileName, false, completionListener);
+//        } catch (IOException e) {
+//            throw new RuntimeException(e);
+//        }
+//
+//        CompletableFuture<ReadContext> readContextFuture = CompletableFuture.supplyAsync(completionListener::actionGet);
+//
+//
+//        CompletableFuture<Void> completableFuture = readContextFuture.thenCompose(readContext -> CompletableFuture.runAsync(() -> {
+//            List<InputStream> blobInputStreams = readContext.getBlobInputStreams();
+//            List<String> partFileNames = new ArrayList<>();
+//            for (int streamNumber = 0; streamNumber < blobInputStreams.size(); streamNumber++) {
+//
+//
+//                try (InputStream inputStream = blobInputStreams.get(streamNumber);
+//                     IndexOutput indexOutput = to.createTempOutput(localFileName, Integer.toString(streamNumber), ioContext)){
+//
+//                    byte[] buffer = new byte[inputStream.available()];
+//                    while ((inputStream.read(buffer)) != -1) {
+//                        indexOutput.writeBytes(buffer, 0, buffer.length);
+//                    }
+//
+//                    partFileNames.add(indexOutput.getName());
+//                } catch (IOException e) {
+//                    // TODO: Error handling
+//                }
+//            }
+//            postDownload(to, localFileName, ioContext, partFileNames);
+//        }, threadPool.generic()));
+//
+//        return completableFuture;
     }
 
     private void postDownload(Directory segmentDirectory, String fileName, IOContext ioContext, List<String> partFileNames) {
