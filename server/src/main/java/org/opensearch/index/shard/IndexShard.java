@@ -216,6 +216,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -4787,9 +4788,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         boolean overrideLocal,
         ActionListener<Void> completionListener
     ) throws IOException {
-        Set<String> toDownloadSegments = new HashSet<>();
-        Set<String> downloadedSegments = new HashSet<>();
-        Set<String> skippedSegments = new HashSet<>();
+        Set<String> toDownloadSegments = Collections.synchronizedSet(new HashSet<>());
+        Set<String> downloadedSegments = Collections.synchronizedSet(new HashSet<>());
+        Set<String> skippedSegments = Collections.synchronizedSet(new HashSet<>());
+
         String segmentNFile = null;
 
         try {
@@ -4818,6 +4820,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 @Override
                 public void onResponse(String fileName) {
                     try {
+                        logger.error("[MultiStream] Completed download for file: {}", fileName);
                         downloadedSegments.add(fileName);
                         if (targetRemoteDirectory != null) {
                             targetRemoteDirectory.copyFrom(storeDirectory, fileName, fileName, IOContext.DEFAULT);
@@ -4842,8 +4845,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 completionListener.onResponse(null);
             }
 
-            toDownloadSegments.forEach(file ->
-                    sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), IOContext.DEFAULT, filesDownloadListener));
+            toDownloadSegments.forEach(file -> {
+                logger.error("[MultiStream] Starting download for file: {}", file);
+//                try {
+//                    threadPool.generic()
+//                            .submit(() -> sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), IOContext.DEFAULT, filesDownloadListener)).get();
+//                } catch (InterruptedException | ExecutionException e) {
+//                    throw new RuntimeException(e);
+//                }
+                sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), IOContext.DEFAULT, filesDownloadListener);
+            });
 
         } finally {
             logger.info("Downloaded segments here: {}", downloadedSegments);
