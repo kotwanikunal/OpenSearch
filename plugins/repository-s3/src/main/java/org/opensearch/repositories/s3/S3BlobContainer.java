@@ -216,6 +216,11 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
         }
     }
 
+    @Override
+    public void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) throws IOException {
+        throw new UnsupportedOperationException("Plugin does not support async read");
+    }
+
 //    @Override
 //    public CompletableFuture<ReadContext> asyncBlobDownload(String blobName, boolean forceSingleStream) throws IOException {
 //        try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {

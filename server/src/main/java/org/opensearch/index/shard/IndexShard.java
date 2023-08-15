@@ -4820,7 +4820,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 @Override
                 public void onResponse(String fileName) {
                     try {
-                        logger.error("[MultiStream] Completed download for file: {}", fileName);
+//                        logger.error("[MultiStream] Completed download for file: {}", fileName);
                         downloadedSegments.add(fileName);
                         if (targetRemoteDirectory != null) {
                             targetRemoteDirectory.copyFrom(storeDirectory, fileName, fileName, IOContext.DEFAULT);
@@ -4831,7 +4831,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     } catch (IOException ex) {
                         // TODO: Error Handling and Retry for individual file
                     }
-                    completionListener.onResponse(null);
                 }
 
                 @Override
@@ -4845,16 +4844,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 completionListener.onResponse(null);
             }
 
-            toDownloadSegments.forEach(file -> {
-                logger.error("[MultiStream] Starting download for file: {}", file);
-//                try {
-//                    threadPool.generic()
-//                            .submit(() -> sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), IOContext.DEFAULT, filesDownloadListener)).get();
-//                } catch (InterruptedException | ExecutionException e) {
-//                    throw new RuntimeException(e);
-//                }
-                sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), IOContext.DEFAULT, filesDownloadListener);
-            });
+            toDownloadSegments.forEach(file -> sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), IOContext.DEFAULT, filesDownloadListener));
 
         } finally {
             logger.info("Downloaded segments here: {}", downloadedSegments);

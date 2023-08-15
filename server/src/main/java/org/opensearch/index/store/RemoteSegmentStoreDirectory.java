@@ -24,14 +24,9 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.ActionListener;
-import org.opensearch.action.support.GroupedActionListener;
-import org.opensearch.action.support.PlainActionFuture;
-import org.opensearch.action.support.ThreadedActionListener;
-import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.exception.CorruptFileException;
-import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.transfer.RemoteTransferContainer;
@@ -39,7 +34,6 @@ import org.opensearch.common.blobstore.transfer.stream.OffsetRangeIndexInputStre
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.util.ByteUtils;
-import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.index.remote.RemoteStoreUtils;
 import org.opensearch.index.store.exception.ChecksumCombinationException;
 import org.opensearch.index.store.lockmanager.FileLockInfo;
@@ -52,7 +46,6 @@ import org.opensearch.threadpool.ThreadPool;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -62,14 +55,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.stream.Collectors;
 import java.util.zip.CRC32;
 
@@ -430,7 +422,13 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * @param context  context for the IO operation
      */
     public void copyTo(Directory to, String src, long blobLength, IOContext context, ActionListener<String> fileListener) {
-        downloadBlob(to, src, blobLength, context, fileListener);
+//        downloadBlob(to, src, blobLength, context, fileListener);
+        try {
+            downloadParallel(to, src, blobLength, context, fileListener);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
     }
 
     private void downloadBlob(Directory to, String localFileName, long blobSize, IOContext ioContext, ActionListener<String> fileListener) {
@@ -479,7 +477,6 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                 }
             };
 
-
             // TODO: Change threadpool to something appropriate
             logger.error("[MultiStream] Starting stream {} for file {}", streamNumber, localFileName);
             CompletableFuture<Void> futureStreamDownload = CompletableFuture.runAsync(() -> {
@@ -493,6 +490,130 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         }
 
         CompletableFuture.allOf(futureStreamDownloads.toArray(new CompletableFuture[0])).join();
+    }
+
+    private void downloadParallel(Directory to, String localFileName, long blobSize, IOContext ioContext, ActionListener<String> fileListener) throws IOException {
+        assert remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer;
+        VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
+
+        final String blobName = getExistingRemoteFilename(localFileName);
+        final long optimalStreamSize = 32; //blobContainer.readBlobPreferredLength();
+        final int numStreams = (int) Math.ceil(blobSize * 1.0 / optimalStreamSize);
+
+        FileCompletionListener fileCompletionListener = new FileCompletionListener(localFileName, to, fileListener);
+        AtomicReferenceArray<String> atomicReferenceArray = new AtomicReferenceArray<>(numStreams);
+
+        for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
+            final FilePartListener filePartListener = new FilePartListener(streamNumber, to, fileCompletionListener, atomicReferenceArray);
+            long start = streamNumber * optimalStreamSize;
+            long end = Math.min(blobSize, ((streamNumber + 1) * optimalStreamSize));
+            long length = end - start;
+
+//            logger.error("[MultiStream] Starting stream {} for file {} on thread {}", streamNumber, localFileName, Thread.currentThread());
+            blobContainer.readBlobAsync(blobName, start, length, filePartListener);
+        }
+    }
+
+    private static class FileCompletionListener implements ActionListener<AtomicReferenceArray<String>> {
+
+        private final String localFileName;
+        private final Directory to;
+        private final ActionListener<String> fileCompletionListener;
+
+        public FileCompletionListener(String localFileName, Directory to, ActionListener<String> fileCompletionListener) {
+            this.localFileName = localFileName;
+            this.to = to;
+            this.fileCompletionListener = fileCompletionListener;
+        }
+
+        @Override
+        public void onResponse(AtomicReferenceArray<String> fileParts) {
+            // stitch parts into to single file and delete temp file
+            postDownload(to, localFileName, fileParts);
+            fileCompletionListener.onResponse(localFileName);
+        }
+
+        @Override
+        public void onFailure(Exception e) {
+            fileCompletionListener.onFailure(e);
+            throw new RuntimeException(e);
+        }
+
+        private void postDownload(Directory segmentDirectory, String fileName, AtomicReferenceArray<String> fileParts) {
+            try (IndexOutput segmentOutput = segmentDirectory.createOutput(fileName, IOContext.DEFAULT)) {
+                for (int fileNumber = 0; fileNumber < fileParts.length(); fileNumber++) {
+                    logger.error("[MultiStream] Starting fileNumber {} for file {} on thread {}", fileNumber, fileName, Thread.currentThread());
+                    String partFileName = fileParts.get(fileNumber);
+                    try (IndexInput indexInput = segmentDirectory.openInput(partFileName, IOContext.DEFAULT)) {
+                        for (int i = 0; i < indexInput.length(); i++) {
+                            segmentOutput.writeByte(indexInput.readByte());
+                        }
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                    segmentDirectory.deleteFile(partFileName);
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    private static class FilePartListener implements ActionListener<InputStream> {
+        private boolean failed = false;
+        private final int partNumber;
+        private final Directory to;
+        AtomicReferenceArray<String> fileParts;
+        private final ActionListener<AtomicReferenceArray<String>> listener;
+
+        private FilePartListener(int partNumber, Directory to, ActionListener<AtomicReferenceArray<String>> listener, AtomicReferenceArray<String> fileParts) {
+            this.to = to;
+            this.partNumber = partNumber;
+            this.listener = listener;
+            this.fileParts = fileParts;
+        }
+
+        @Override
+        public void onResponse(InputStream inputStream) {
+            final String tempFile = UUID.randomUUID().toString();
+            try (final IndexOutput segmentOutput = to.createOutput(tempFile, IOContext.DEFAULT); inputStream) {
+                byte[] buffer = new byte[inputStream.available()];
+                while ((inputStream.read(buffer)) != -1) {
+                    segmentOutput.writeBytes(buffer, 0, buffer.length);
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+//            logger.error("[MultiStream] Finished stream {} on thread {}", tempFile, Thread.currentThread());
+            synchronized(fileParts) {
+                if (failed) {
+                    // delete temp file
+//                    to.deleteFile(tempFile);
+                    throw new RuntimeException("Failed");
+                } else {
+                    fileParts.set(partNumber, tempFile);
+
+                    // TODO: Improve all streams completion logic here
+                    for (int i = 0; i < fileParts.length(); i++) {
+                        if (fileParts.get(i) == null) {
+                            return;
+                        }
+                    }
+                    listener.onResponse(fileParts);
+                }
+            }
+        }
+
+        @Override
+        public void onFailure(Exception e) {
+            synchronized (fileParts) {
+                if (failed == false) {
+                    failed = true;
+                    listener.onFailure(e);
+                    throw new RuntimeException(e);
+                }
+            }
+        }
     }
 
     private void postDownload(Directory segmentDirectory, String fileName, IOContext ioContext, List<String> partFileNames) {

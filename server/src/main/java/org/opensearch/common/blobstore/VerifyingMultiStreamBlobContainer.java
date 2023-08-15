@@ -48,11 +48,5 @@ public interface VerifyingMultiStreamBlobContainer extends BlobContainer {
      * @throws IOException if any of the input streams could not be requested, or reading metadata for requested blob fails
      */
 
-    default void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) throws IOException {
-        try {
-            listener.onResponse(readBlob(blobName, position, length));
-        } catch (IOException exception) {
-            listener.onFailure(exception);
-        }
-    }
+     void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) throws IOException;
 }
