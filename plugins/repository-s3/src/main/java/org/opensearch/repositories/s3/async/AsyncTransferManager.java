@@ -115,11 +115,10 @@ public final class AsyncTransferManager {
             getObjectRequestBuilder.range(HttpRangeUtils.toHttpRangeHeader(downloadRequest.getStart(), downloadRequest.getEnd()));
         }
 
-        CompletableFuture<InputStream> objectFutureStream =
-            s3AsyncClient.getObject(getObjectRequestBuilder.build(), AsyncResponseTransformer.toBlockingInputStream())
-                .thenCompose(x -> CompletableFuture.supplyAsync(() -> x));
-
-        return objectFutureStream;
+        return SocketAccess.doPrivileged(
+            () -> s3AsyncClient.getObject(getObjectRequestBuilder.build(), AsyncResponseTransformer.toBlockingInputStream())
+                .thenCompose(x -> CompletableFuture.supplyAsync(() -> x))
+        );
     }
 
     private void uploadInParts(

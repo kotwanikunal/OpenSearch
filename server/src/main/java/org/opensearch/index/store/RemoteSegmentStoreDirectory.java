@@ -48,6 +48,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -56,12 +57,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.stream.Collectors;
 import java.util.zip.CRC32;
 
@@ -109,9 +108,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     private Map<String, UploadedSegmentMetadata> segmentsUploadedToRemoteStore;
 
     private static final VersionedCodecStreamWrapper<RemoteSegmentMetadata> metadataStreamWrapper = new VersionedCodecStreamWrapper<>(
-            new RemoteSegmentMetadataHandler(),
-            RemoteSegmentMetadata.CURRENT_VERSION,
-            RemoteSegmentMetadata.METADATA_CODEC
+        new RemoteSegmentMetadataHandler(),
+        RemoteSegmentMetadata.CURRENT_VERSION,
+        RemoteSegmentMetadata.METADATA_CODEC
     );
 
     private static final Logger logger = LogManager.getLogger(RemoteSegmentStoreDirectory.class);
@@ -125,10 +124,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     private final AtomicLong metadataUploadCounter = new AtomicLong(0);
 
     public RemoteSegmentStoreDirectory(
-            RemoteDirectory remoteDataDirectory,
-            RemoteDirectory remoteMetadataDirectory,
-            RemoteStoreLockManager mdLockManager,
-            ThreadPool threadPool
+        RemoteDirectory remoteDataDirectory,
+        RemoteDirectory remoteMetadataDirectory,
+        RemoteStoreLockManager mdLockManager,
+        ThreadPool threadPool
     ) throws IOException {
         super(remoteDataDirectory);
         this.remoteDataDirectory = remoteDataDirectory;
@@ -192,8 +191,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         RemoteSegmentMetadata remoteSegmentMetadata = null;
 
         List<String> metadataFiles = remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                MetadataFilenameUtils.METADATA_PREFIX,
-                1
+            MetadataFilenameUtils.METADATA_PREFIX,
+            1
         );
 
         if (metadataFiles.isEmpty() == false) {
@@ -267,30 +266,30 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
         static String getMetadataFilePrefixForCommit(long primaryTerm, long generation) {
             return String.join(
-                    SEPARATOR,
-                    METADATA_PREFIX,
-                    RemoteStoreUtils.invertLong(primaryTerm),
-                    RemoteStoreUtils.invertLong(generation)
+                SEPARATOR,
+                METADATA_PREFIX,
+                RemoteStoreUtils.invertLong(primaryTerm),
+                RemoteStoreUtils.invertLong(generation)
             );
         }
 
         // Visible for testing
         static String getMetadataFilename(
-                long primaryTerm,
-                long generation,
-                long translogGeneration,
-                long uploadCounter,
-                int metadataVersion
+            long primaryTerm,
+            long generation,
+            long translogGeneration,
+            long uploadCounter,
+            int metadataVersion
         ) {
             return String.join(
-                    SEPARATOR,
-                    METADATA_PREFIX,
-                    RemoteStoreUtils.invertLong(primaryTerm),
-                    RemoteStoreUtils.invertLong(generation),
-                    RemoteStoreUtils.invertLong(translogGeneration),
-                    RemoteStoreUtils.invertLong(uploadCounter),
-                    RemoteStoreUtils.invertLong(System.currentTimeMillis()),
-                    String.valueOf(metadataVersion)
+                SEPARATOR,
+                METADATA_PREFIX,
+                RemoteStoreUtils.invertLong(primaryTerm),
+                RemoteStoreUtils.invertLong(generation),
+                RemoteStoreUtils.invertLong(translogGeneration),
+                RemoteStoreUtils.invertLong(uploadCounter),
+                RemoteStoreUtils.invertLong(System.currentTimeMillis()),
+                String.valueOf(metadataVersion)
             );
         }
 
@@ -422,237 +421,180 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * @param context  context for the IO operation
      */
     public void copyTo(Directory to, String src, long blobLength, IOContext context, ActionListener<String> fileListener) {
-//        downloadBlob(to, src, blobLength, context, fileListener);
-        try {
-            downloadParallel(to, src, blobLength, context, fileListener);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
+        downloadBlob(to, src, blobLength, fileListener);
     }
 
-    private void downloadBlob(Directory to, String localFileName, long blobSize, IOContext ioContext, ActionListener<String> fileListener) {
+    private void downloadBlob(
+        Directory segmentDirectory,
+        String segmentFileName,
+        long segmentSize,
+        ActionListener<String> segmentCompletionListener
+    ) {
         assert remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer;
         VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
 
-        final String remoteFileName = getExistingRemoteFilename(localFileName);
-        final List<String> partFileNames = new ArrayList<>();
-        final long optimalStreamSize = 8; //blobContainer.readBlobPreferredLength();
-        final int numStreams = (int) Math.ceil(blobSize * 1.0 / optimalStreamSize);
+        final String blobName = getExistingRemoteFilename(segmentFileName);
+        final long optimalStreamSize = blobContainer.readBlobPreferredLength();
+        final int numStreams = (int) Math.ceil(segmentSize * 1.0 / optimalStreamSize);
 
-        AtomicInteger atomicInteger = new AtomicInteger(numStreams);
-        List<CompletableFuture<Void>> futureStreamDownloads = new ArrayList<>();
+        final AtomicBoolean anyStreamFailed = new AtomicBoolean();
+        final List<String> partFileNames = Collections.synchronizedList(new ArrayList<>());
+
+        final FileCompletionListener fileCompletionListener = new FileCompletionListener(
+            numStreams,
+            segmentFileName,
+            segmentDirectory,
+            partFileNames,
+            anyStreamFailed,
+            segmentCompletionListener
+        );
 
         for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
+            String partFileName = UUID.randomUUID().toString();
             long start = streamNumber * optimalStreamSize;
-            long end = Math.min(blobSize, ((streamNumber + 1) * optimalStreamSize));
+            long end = Math.min(segmentSize, ((streamNumber + 1) * optimalStreamSize));
             long length = end - start;
-            final String partFileName = localFileName + "__" + streamNumber;
             partFileNames.add(partFileName);
 
-            ActionListener<InputStream> streamListener = new ActionListener<>() {
-                @Override
-                public void onResponse(InputStream inputStream) {
-                    try (IndexOutput segmentOutput = to.createOutput(partFileName, ioContext); inputStream) {
-                        byte[] buffer = new byte[inputStream.available()];
-                        while ((inputStream.read(buffer)) != -1) {
-                            segmentOutput.writeBytes(buffer, 0, buffer.length);
-                        }
-                    } catch (IOException ex) {
-                        // TODO: Stream error handling
-                    }
-
-                    logger.error("[MultiStream] Finished stream {} for file {}", partFileName, localFileName);
-                    atomicInteger.decrementAndGet();
-
-                    if(atomicInteger.get() == 0) {
-                        postDownload(to, localFileName, ioContext, partFileNames);
-                        fileListener.onResponse(localFileName);
-                    }
-                }
-
-                @Override
-                public void onFailure(Exception e) {
-
-                }
-            };
-
-            // TODO: Change threadpool to something appropriate
-            logger.error("[MultiStream] Starting stream {} for file {}", streamNumber, localFileName);
-            CompletableFuture<Void> futureStreamDownload = CompletableFuture.runAsync(() -> {
-                try {
-                    blobContainer.readBlobAsync(remoteFileName, start, length, streamListener);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }, threadPool.generic());
-            futureStreamDownloads.add(futureStreamDownload);
-        }
-
-        CompletableFuture.allOf(futureStreamDownloads.toArray(new CompletableFuture[0])).join();
-    }
-
-    private void downloadParallel(Directory to, String localFileName, long blobSize, IOContext ioContext, ActionListener<String> fileListener) throws IOException {
-        assert remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer;
-        VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
-
-        final String blobName = getExistingRemoteFilename(localFileName);
-        final long optimalStreamSize = 32; //blobContainer.readBlobPreferredLength();
-        final int numStreams = (int) Math.ceil(blobSize * 1.0 / optimalStreamSize);
-
-        FileCompletionListener fileCompletionListener = new FileCompletionListener(localFileName, to, fileListener);
-        AtomicReferenceArray<String> atomicReferenceArray = new AtomicReferenceArray<>(numStreams);
-
-        for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
-            final FilePartListener filePartListener = new FilePartListener(streamNumber, to, fileCompletionListener, atomicReferenceArray);
-            long start = streamNumber * optimalStreamSize;
-            long end = Math.min(blobSize, ((streamNumber + 1) * optimalStreamSize));
-            long length = end - start;
-
-//            logger.error("[MultiStream] Starting stream {} for file {} on thread {}", streamNumber, localFileName, Thread.currentThread());
-            blobContainer.readBlobAsync(blobName, start, length, filePartListener);
+            final FileStreamListener fileStreamListener = new FileStreamListener(
+                partFileName,
+                segmentDirectory,
+                anyStreamFailed,
+                fileCompletionListener
+            );
+            blobContainer.readBlobAsync(blobName, start, length, fileStreamListener);
         }
     }
 
-    private static class FileCompletionListener implements ActionListener<AtomicReferenceArray<String>> {
+    private static class FileCompletionListener implements ActionListener<String> {
+        private final int numStreams;
+        private final String segmentFileName;
+        private final Directory segmentDirectory;
+        private final List<String> toDownloadPartFileNames;
+        private final AtomicInteger downloadedPartFiles;
+        private final AtomicBoolean anyStreamFailed;
+        private final ActionListener<String> segmentCompletionListener;
 
-        private final String localFileName;
-        private final Directory to;
-        private final ActionListener<String> fileCompletionListener;
-
-        public FileCompletionListener(String localFileName, Directory to, ActionListener<String> fileCompletionListener) {
-            this.localFileName = localFileName;
-            this.to = to;
-            this.fileCompletionListener = fileCompletionListener;
+        public FileCompletionListener(
+            int numStreams,
+            String segmentFileName,
+            Directory segmentDirectory,
+            List<String> toDownloadPartFileNames,
+            AtomicBoolean anyStreamFailed,
+            ActionListener<String> segmentCompletionListener
+        ) {
+            this.downloadedPartFiles = new AtomicInteger();
+            this.numStreams = numStreams;
+            this.segmentFileName = segmentFileName;
+            this.segmentDirectory = segmentDirectory;
+            this.anyStreamFailed = anyStreamFailed;
+            this.toDownloadPartFileNames = toDownloadPartFileNames;
+            this.segmentCompletionListener = segmentCompletionListener;
         }
 
         @Override
-        public void onResponse(AtomicReferenceArray<String> fileParts) {
-            // stitch parts into to single file and delete temp file
-            postDownload(to, localFileName, fileParts);
-            fileCompletionListener.onResponse(localFileName);
+        public void onResponse(String streamFileName) {
+            if (downloadedPartFiles.incrementAndGet() == numStreams) {
+                try (IndexOutput segmentOutput = segmentDirectory.createOutput(segmentFileName, IOContext.DEFAULT)) {
+                    for (String partFileName : toDownloadPartFileNames) {
+                        try (IndexInput indexInput = segmentDirectory.openInput(partFileName, IOContext.DEFAULT)) {
+                            for (int i = 0; i < indexInput.length(); i++) {
+                                segmentOutput.writeByte(indexInput.readByte());
+                            }
+                        }
+                        segmentDirectory.deleteFile(partFileName);
+                    }
+                } catch (IOException e) {
+                    onFailure(e);
+                }
+                segmentCompletionListener.onResponse(segmentFileName);
+            }
         }
 
         @Override
         public void onFailure(Exception e) {
-            fileCompletionListener.onFailure(e);
-            throw new RuntimeException(e);
-        }
-
-        private void postDownload(Directory segmentDirectory, String fileName, AtomicReferenceArray<String> fileParts) {
-            try (IndexOutput segmentOutput = segmentDirectory.createOutput(fileName, IOContext.DEFAULT)) {
-                for (int fileNumber = 0; fileNumber < fileParts.length(); fileNumber++) {
-                    logger.error("[MultiStream] Starting fileNumber {} for file {} on thread {}", fileNumber, fileName, Thread.currentThread());
-                    String partFileName = fileParts.get(fileNumber);
-                    try (IndexInput indexInput = segmentDirectory.openInput(partFileName, IOContext.DEFAULT)) {
-                        for (int i = 0; i < indexInput.length(); i++) {
-                            segmentOutput.writeByte(indexInput.readByte());
-                        }
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                    segmentDirectory.deleteFile(partFileName);
+            try {
+                Set<String> tempFilesInDirectory = new HashSet<>(Arrays.asList(segmentDirectory.listAll()));
+                if (tempFilesInDirectory.contains(segmentFileName)) {
+                    segmentDirectory.deleteFile(segmentFileName);
                 }
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+
+                tempFilesInDirectory.retainAll(toDownloadPartFileNames);
+                for (String tempFile : tempFilesInDirectory) {
+                    segmentDirectory.deleteFile(tempFile);
+                }
+
+            } catch (IOException ex) {
+                // Die silently?
+            }
+
+            if (!anyStreamFailed.get()) {
+                segmentCompletionListener.onFailure(e);
+                anyStreamFailed.compareAndSet(false, true);
             }
         }
     }
 
-    private static class FilePartListener implements ActionListener<InputStream> {
-        private boolean failed = false;
-        private final int partNumber;
-        private final Directory to;
-        AtomicReferenceArray<String> fileParts;
-        private final ActionListener<AtomicReferenceArray<String>> listener;
+    private static class FileStreamListener implements ActionListener<InputStream> {
+        private final String partFileName;
+        private final Directory segmentDirectory;
+        private final AtomicBoolean anyStreamFailed;
+        private final ActionListener<String> listener;
 
-        private FilePartListener(int partNumber, Directory to, ActionListener<AtomicReferenceArray<String>> listener, AtomicReferenceArray<String> fileParts) {
-            this.to = to;
-            this.partNumber = partNumber;
+        private FileStreamListener(
+            String partFileName,
+            Directory segmentDirectory,
+            AtomicBoolean anyStreamFailed,
+            ActionListener<String> listener
+        ) {
+            this.partFileName = partFileName;
+            this.segmentDirectory = segmentDirectory;
+            this.anyStreamFailed = anyStreamFailed;
             this.listener = listener;
-            this.fileParts = fileParts;
         }
 
         @Override
         public void onResponse(InputStream inputStream) {
-            final String tempFile = UUID.randomUUID().toString();
-            try (final IndexOutput segmentOutput = to.createOutput(tempFile, IOContext.DEFAULT); inputStream) {
-                byte[] buffer = new byte[inputStream.available()];
-                while ((inputStream.read(buffer)) != -1) {
-                    segmentOutput.writeBytes(buffer, 0, buffer.length);
-                }
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-//            logger.error("[MultiStream] Finished stream {} on thread {}", tempFile, Thread.currentThread());
-            synchronized(fileParts) {
-                if (failed) {
-                    // delete temp file
-//                    to.deleteFile(tempFile);
-                    throw new RuntimeException("Failed");
-                } else {
-                    fileParts.set(partNumber, tempFile);
-
-                    // TODO: Improve all streams completion logic here
-                    for (int i = 0; i < fileParts.length(); i++) {
-                        if (fileParts.get(i) == null) {
-                            return;
-                        }
+            if (!anyStreamFailed.get()) {
+                try (final IndexOutput segmentOutput = segmentDirectory.createOutput(partFileName, IOContext.DEFAULT); inputStream) {
+                    byte[] buffer = new byte[inputStream.available()];
+                    while ((inputStream.read(buffer)) != -1) {
+                        segmentOutput.writeBytes(buffer, 0, buffer.length);
                     }
-                    listener.onResponse(fileParts);
+                } catch (IOException e) {
+                    listener.onFailure(e);
                 }
+                listener.onResponse(partFileName);
             }
         }
 
         @Override
         public void onFailure(Exception e) {
-            synchronized (fileParts) {
-                if (failed == false) {
-                    failed = true;
-                    listener.onFailure(e);
-                    throw new RuntimeException(e);
-                }
-            }
-        }
-    }
-
-    private void postDownload(Directory segmentDirectory, String fileName, IOContext ioContext, List<String> partFileNames) {
-        try (IndexOutput segmentOutput = segmentDirectory.createOutput(fileName, ioContext)) {
-            for (String partFileName : partFileNames) {
-                try (IndexInput indexInput = segmentDirectory.openInput(partFileName, ioContext)) {
-                    for (int i = 0; i < indexInput.length(); i++) {
-                        segmentOutput.writeByte(indexInput.readByte());
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
+            try {
                 segmentDirectory.deleteFile(partFileName);
+            } catch (IOException ex) {
+                // Die silently?
             }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+            listener.onFailure(e);
         }
     }
 
     private void uploadBlob(Directory from, String src, String remoteFileName, IOContext ioContext, ActionListener<Void> listener)
-            throws Exception {
+        throws Exception {
         long expectedChecksum = calculateChecksumOfChecksum(from, src);
         long contentLength;
         try (IndexInput indexInput = from.openInput(src, ioContext)) {
             contentLength = indexInput.length();
         }
         RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
-                src,
-                remoteFileName,
-                contentLength,
-                true,
-                WritePriority.NORMAL,
-                (size, position) -> new OffsetRangeIndexInputStream(
-                        from.openInput(src, ioContext),
-                        size,
-                        position
-                ),
-                expectedChecksum,
-                remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer
+            src,
+            remoteFileName,
+            contentLength,
+            true,
+            WritePriority.NORMAL,
+            (size, position) -> new OffsetRangeIndexInputStream(from.openInput(src, ioContext), size, position),
+            expectedChecksum,
+            remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer
         );
         ActionListener<Void> completionListener = ActionListener.wrap(resp -> {
             try {
@@ -743,23 +685,23 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     // Visible for testing
     String getMetadataFileForCommit(long primaryTerm, long generation) throws IOException {
         List<String> metadataFiles = remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
-                1
+            MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
+            1
         );
 
         if (metadataFiles.isEmpty()) {
             throw new NoSuchFileException(
-                    "Metadata file is not present for given primary term " + primaryTerm + " and generation " + generation
+                "Metadata file is not present for given primary term " + primaryTerm + " and generation " + generation
             );
         }
         if (metadataFiles.size() != 1) {
             throw new IllegalStateException(
-                    "there should be only one metadata file for given primary term "
-                            + primaryTerm
-                            + "and generation "
-                            + generation
-                            + " but found "
-                            + metadataFiles.size()
+                "there should be only one metadata file for given primary term "
+                    + primaryTerm
+                    + "and generation "
+                    + generation
+                    + " but found "
+                    + metadataFiles.size()
             );
         }
         return metadataFiles.get(0);
@@ -797,7 +739,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      */
     public boolean containsFile(String localFilename, String checksum) {
         return segmentsUploadedToRemoteStore.containsKey(localFilename)
-                && segmentsUploadedToRemoteStore.get(localFilename).checksum.equals(checksum);
+            && segmentsUploadedToRemoteStore.get(localFilename).checksum.equals(checksum);
     }
 
     /**
@@ -810,19 +752,19 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * @throws IOException in case of I/O error while uploading the metadata file
      */
     public void uploadMetadata(
-            Collection<String> segmentFiles,
-            SegmentInfos segmentInfosSnapshot,
-            Directory storeDirectory,
-            long primaryTerm,
-            long translogGeneration
+        Collection<String> segmentFiles,
+        SegmentInfos segmentInfosSnapshot,
+        Directory storeDirectory,
+        long primaryTerm,
+        long translogGeneration
     ) throws IOException {
         synchronized (this) {
             String metadataFilename = MetadataFilenameUtils.getMetadataFilename(
-                    primaryTerm,
-                    segmentInfosSnapshot.getGeneration(),
-                    translogGeneration,
-                    metadataUploadCounter.incrementAndGet(),
-                    RemoteSegmentMetadata.CURRENT_VERSION
+                primaryTerm,
+                segmentInfosSnapshot.getGeneration(),
+                translogGeneration,
+                metadataUploadCounter.incrementAndGet(),
+                RemoteSegmentMetadata.CURRENT_VERSION
             );
             try {
                 try (IndexOutput indexOutput = storeDirectory.createOutput(metadataFilename, IOContext.DEFAULT)) {
@@ -837,18 +779,18 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
                     ByteBuffersDataOutput byteBuffersIndexOutput = new ByteBuffersDataOutput();
                     segmentInfosSnapshot.write(
-                            new ByteBuffersIndexOutput(byteBuffersIndexOutput, "Snapshot of SegmentInfos", "SegmentInfos")
+                        new ByteBuffersIndexOutput(byteBuffersIndexOutput, "Snapshot of SegmentInfos", "SegmentInfos")
                     );
                     byte[] segmentInfoSnapshotByteArray = byteBuffersIndexOutput.toArrayCopy();
 
                     metadataStreamWrapper.writeStream(
-                            indexOutput,
-                            new RemoteSegmentMetadata(
-                                    RemoteSegmentMetadata.fromMapOfStrings(uploadedSegments),
-                                    segmentInfoSnapshotByteArray,
-                                    primaryTerm,
-                                    segmentInfosSnapshot.getGeneration()
-                            )
+                        indexOutput,
+                        new RemoteSegmentMetadata(
+                            RemoteSegmentMetadata.fromMapOfStrings(uploadedSegments),
+                            segmentInfoSnapshotByteArray,
+                            primaryTerm,
+                            segmentInfosSnapshot.getGeneration()
+                        )
                     );
                 }
                 storeDirectory.sync(Collections.singleton(metadataFilename));
@@ -890,13 +832,13 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                 return JZlib.crc32_combine(storedChecksum, checksumOfChecksum.getValue(), SEGMENT_CHECKSUM_BYTES);
             } catch (Exception e) {
                 throw new ChecksumCombinationException(
-                        "Potentially corrupted file: Checksum combination failed while combining stored checksum "
-                                + "and calculated checksum of stored checksum in segment file: "
-                                + file
-                                + ", directory: "
-                                + directory,
-                        file,
-                        e
+                    "Potentially corrupted file: Checksum combination failed while combining stored checksum "
+                        + "and calculated checksum of stored checksum in segment file: "
+                        + file
+                        + ", directory: "
+                        + directory,
+                    file,
+                    e
                 );
             }
         }
@@ -933,32 +875,32 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      */
     public void deleteStaleSegments(int lastNMetadataFilesToKeep) throws IOException {
         List<String> sortedMetadataFileList = remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                MetadataFilenameUtils.METADATA_PREFIX,
-                Integer.MAX_VALUE
+            MetadataFilenameUtils.METADATA_PREFIX,
+            Integer.MAX_VALUE
         );
         if (sortedMetadataFileList.size() <= lastNMetadataFilesToKeep) {
             logger.info(
-                    "Number of commits in remote segment store={}, lastNMetadataFilesToKeep={}",
-                    sortedMetadataFileList.size(),
-                    lastNMetadataFilesToKeep
+                "Number of commits in remote segment store={}, lastNMetadataFilesToKeep={}",
+                sortedMetadataFileList.size(),
+                lastNMetadataFilesToKeep
             );
             return;
         }
 
         List<String> metadataFilesEligibleToDelete = sortedMetadataFileList.subList(
-                lastNMetadataFilesToKeep,
-                sortedMetadataFileList.size()
+            lastNMetadataFilesToKeep,
+            sortedMetadataFileList.size()
         );
         List<String> metadataFilesToBeDeleted = metadataFilesEligibleToDelete.stream().filter(metadataFile -> {
             try {
                 return !isLockAcquired(metadataFile);
             } catch (IOException e) {
                 logger.error(
-                        "skipping metadata file ("
-                                + metadataFile
-                                + ") deletion for this run,"
-                                + " as checking lock for metadata is failing with error: "
-                                + e
+                    "skipping metadata file ("
+                        + metadataFile
+                        + ") deletion for this run,"
+                        + " as checking lock for metadata is failing with error: "
+                        + e
                 );
                 return false;
             }
@@ -972,15 +914,15 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             Map<String, UploadedSegmentMetadata> segmentMetadataMap = readMetadataFile(metadataFile).getMetadata();
             activeSegmentFilesMetadataMap.putAll(segmentMetadataMap);
             activeSegmentRemoteFilenames.addAll(
-                    segmentMetadataMap.values().stream().map(metadata -> metadata.uploadedFilename).collect(Collectors.toSet())
+                segmentMetadataMap.values().stream().map(metadata -> metadata.uploadedFilename).collect(Collectors.toSet())
             );
         }
         for (String metadataFile : metadataFilesToBeDeleted) {
             Map<String, UploadedSegmentMetadata> staleSegmentFilesMetadataMap = readMetadataFile(metadataFile).getMetadata();
             Set<String> staleSegmentRemoteFilenames = staleSegmentFilesMetadataMap.values()
-                    .stream()
-                    .map(metadata -> metadata.uploadedFilename)
-                    .collect(Collectors.toSet());
+                .stream()
+                .map(metadata -> metadata.uploadedFilename)
+                .collect(Collectors.toSet());
             AtomicBoolean deletionSuccessful = new AtomicBoolean(true);
             staleSegmentRemoteFilenames.stream().filter(file -> !activeSegmentRemoteFilenames.contains(file)).forEach(file -> {
                 try {
@@ -993,9 +935,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                 } catch (IOException e) {
                     deletionSuccessful.set(false);
                     logger.info(
-                            "Exception while deleting segment file {} corresponding to metadata file {}. Deletion will be re-tried",
-                            file,
-                            metadataFile
+                        "Exception while deleting segment file {} corresponding to metadata file {}. Deletion will be re-tried",
+                        file,
+                        metadataFile
                     );
                 }
             });
@@ -1020,8 +962,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                         deleteStaleSegments(lastNMetadataFilesToKeep);
                     } catch (Exception e) {
                         logger.info(
-                                "Exception while deleting stale commits from remote segment store, will retry delete post next commit",
-                                e
+                            "Exception while deleting stale commits from remote segment store, will retry delete post next commit",
+                            e
                         );
                     } finally {
                         canDeleteStaleCommits.set(true);
@@ -1040,8 +982,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      */
     private boolean deleteIfEmpty() throws IOException {
         Collection<String> metadataFiles = remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
-                MetadataFilenameUtils.METADATA_PREFIX,
-                1
+            MetadataFilenameUtils.METADATA_PREFIX,
+            1
         );
         if (metadataFiles.size() != 0) {
             logger.info("Remote directory still has files , not deleting the path");

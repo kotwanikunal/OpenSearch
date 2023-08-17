@@ -8,7 +8,6 @@
 
 package org.opensearch.index.shard;
 
-import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.index.engine.NRTReplicationEngineFactory;

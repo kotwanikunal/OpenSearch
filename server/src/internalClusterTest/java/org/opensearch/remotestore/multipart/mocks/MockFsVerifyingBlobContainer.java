@@ -11,22 +11,14 @@ package org.opensearch.remotestore.multipart.mocks;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.CorruptIndexException;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexOutput;
-import org.junit.AfterClass;
 import org.opensearch.action.ActionListener;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
-import org.opensearch.common.blobstore.stream.read.ReadContext;
-import org.opensearch.common.component.AbstractLifecycleComponent;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.fs.FsBlobContainer;
 import org.opensearch.common.blobstore.fs.FsBlobStore;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
-import org.opensearch.common.util.concurrent.ListenableFuture;
-import org.opensearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -34,16 +26,9 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -52,6 +37,8 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
     private static final int TRANSFER_TIMEOUT_MILLIS = 30000;
 
     private final boolean triggerDataIntegrityFailure;
+
+    private static Set<String> triedBlobs = new HashSet<>();
 
     private static final Logger logger = LogManager.getLogger(MockFsVerifyingBlobContainer.class);
 
@@ -104,12 +91,12 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
         }
         if (writeContext.getFileSize() != totalContentRead.get()) {
             throw new IOException(
-                    "Incorrect content length read for file "
-                            + writeContext.getFileName()
-                            + ", actual file size: "
-                            + writeContext.getFileSize()
-                            + ", bytes read: "
-                            + totalContentRead.get()
+                "Incorrect content length read for file "
+                    + writeContext.getFileName()
+                    + ", actual file size: "
+                    + writeContext.getFileSize()
+                    + ", bytes read: "
+                    + totalContentRead.get()
             );
         }
 
@@ -117,12 +104,12 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
             // bulks need to succeed for segment files to be generated
             if (isSegmentFile(writeContext.getFileName()) && triggerDataIntegrityFailure) {
                 completionListener.onFailure(
-                        new RuntimeException(
-                                new CorruptIndexException(
-                                        "Data integrity check failure for file: " + writeContext.getFileName(),
-                                        writeContext.getFileName()
-                                )
+                    new RuntimeException(
+                        new CorruptIndexException(
+                            "Data integrity check failure for file: " + writeContext.getFileName(),
+                            writeContext.getFileName()
                         )
+                    )
                 );
             } else {
                 writeContext.getUploadFinalizer().accept(true);
@@ -135,20 +122,14 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
     }
 
     @Override
-    public void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) throws IOException {
-        ExecutorService executorService = Executors.newFixedThreadPool(10);
-        try {
-            executorService.submit(() -> {
-                try {
-                    InputStream inputStream = readBlob(blobName, position, length);
-                    listener.onResponse(inputStream);
-                } catch (Exception e) {
-                    listener.onFailure(e);
-                }
-            });
-        } finally {
-            executorService.shutdown();
-        }
+    public void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) {
+        new Thread(() -> {
+            try {
+                listener.onResponse(readBlob(blobName, position, length));
+            } catch (Exception e) {
+                listener.onFailure(e);
+            }
+        }).start();
     }
 
     private boolean isSegmentFile(String filename) {

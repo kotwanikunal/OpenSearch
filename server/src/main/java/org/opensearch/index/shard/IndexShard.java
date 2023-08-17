@@ -196,7 +196,6 @@ import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.io.UncheckedIOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.NoSuchFileException;
@@ -213,10 +212,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -4626,11 +4623,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param shouldCommit if the shard requires committing the changes after sync from remote.
      * @throws IOException if exception occurs while reading segments from remote store
      */
-    public void syncSegmentsFromRemoteSegmentStore(
-        boolean overrideLocal,
-        boolean refreshLevelSegmentSync,
-        boolean shouldCommit
-    ) throws IOException {
+    public void syncSegmentsFromRemoteSegmentStore(boolean overrideLocal, boolean refreshLevelSegmentSync, boolean shouldCommit)
+        throws IOException {
         assert indexSettings.isRemoteStoreEnabled();
         logger.info("Downloading segments from remote segment store");
         RemoteSegmentStoreDirectory remoteDirectory = getRemoteDirectory();
@@ -4788,69 +4782,84 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         boolean overrideLocal,
         ActionListener<Void> completionListener
     ) throws IOException {
-        Set<String> toDownloadSegments = Collections.synchronizedSet(new HashSet<>());
-        Set<String> downloadedSegments = Collections.synchronizedSet(new HashSet<>());
-        Set<String> skippedSegments = Collections.synchronizedSet(new HashSet<>());
 
+        if (overrideLocal) {
+            deleteExistingSegments(storeDirectory);
+        }
+
+        Set<String> toDownloadSegments = Collections.synchronizedSet(new HashSet<>());
+        Set<String> skippedSegments = Collections.synchronizedSet(new HashSet<>());
         String segmentNFile = null;
 
-        try {
-            Set<String> localSegmentFiles = Sets.newHashSet(storeDirectory.listAll());
-            if (overrideLocal) {
-                for (String file : localSegmentFiles) {
-                    storeDirectory.deleteFile(file);
-                }
+        for (String file : uploadedSegments.keySet()) {
+            long checksum = Long.parseLong(uploadedSegments.get(file).getChecksum());
+            if (overrideLocal || localDirectoryContains(storeDirectory, file, checksum) == false) {
+                toDownloadSegments.add(file);
+            } else {
+                skippedSegments.add(file);
             }
 
-            for (String file : uploadedSegments.keySet()) {
-                long checksum = Long.parseLong(uploadedSegments.get(file).getChecksum());
-
-                if (overrideLocal || localDirectoryContains(storeDirectory, file, checksum) == false) {
-                    toDownloadSegments.add(file);
-                } else {
-                    skippedSegments.add(file);
-                }
-                if (file.startsWith(IndexFileNames.SEGMENTS)) {
-                    assert segmentNFile == null : "There should be only one SegmentInfosSnapshot file";
-                    segmentNFile = file;
-                }
+            if (file.startsWith(IndexFileNames.SEGMENTS)) {
+                assert segmentNFile == null : "There should be only one SegmentInfosSnapshot file";
+                segmentNFile = file;
             }
-
-            ActionListener<String> filesDownloadListener = new ActionListener<>() {
-                @Override
-                public void onResponse(String fileName) {
-                    try {
-//                        logger.error("[MultiStream] Completed download for file: {}", fileName);
-                        downloadedSegments.add(fileName);
-                        if (targetRemoteDirectory != null) {
-                            targetRemoteDirectory.copyFrom(storeDirectory, fileName, fileName, IOContext.DEFAULT);
-                        }
-                        if (downloadedSegments.containsAll(toDownloadSegments)) {
-                            completionListener.onResponse(null);
-                        }
-                    } catch (IOException ex) {
-                        // TODO: Error Handling and Retry for individual file
-                    }
-                }
-
-                @Override
-                public void onFailure(Exception e) {
-                    // TODO: Error Handling and Retry for individual file
-                    completionListener.onFailure(e);
-                }
-            };
-
-            if (toDownloadSegments.isEmpty()) {
-                completionListener.onResponse(null);
-            }
-
-            toDownloadSegments.forEach(file -> sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), IOContext.DEFAULT, filesDownloadListener));
-
-        } finally {
-            logger.info("Downloaded segments here: {}", downloadedSegments);
-            logger.info("Skipped download for segments here: {}", skippedSegments);
         }
+
+        Set<String> downloadedSegments = Collections.synchronizedSet(new HashSet<>());
+        Set<String> failedSegments = Collections.synchronizedSet(new HashSet<>());
+
+        ActionListener<String> filesDownloadListener = new ActionListener<>() {
+            @Override
+            public void onResponse(String fileName) {
+                try {
+                    downloadedSegments.add(fileName);
+                    if (targetRemoteDirectory != null) {
+                        targetRemoteDirectory.copyFrom(storeDirectory, fileName, fileName, IOContext.DEFAULT);
+                    }
+                    if (downloadedSegments.containsAll(toDownloadSegments)) {
+                        completionListener.onResponse(null);
+                    }
+                } catch (IOException ex) {
+                    // logger.error("Failed to download segment file {} from the remote store", fileName);
+                    // failedSegments.add(fileName);
+                }
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                // TODO: Error Handling and Retry for individual file
+                completionListener.onFailure(e);
+            }
+        };
+
+        if (toDownloadSegments.isEmpty()) {
+            completionListener.onResponse(null);
+        }
+
+        toDownloadSegments.forEach(
+            file -> sourceRemoteDirectory.copyTo(
+                storeDirectory,
+                file,
+                uploadedSegments.get(file).getLength(),
+                IOContext.DEFAULT,
+                filesDownloadListener
+            )
+        );
+
         return segmentNFile;
+    }
+
+    private void downloadSegments(Set<String> toDownloadSegments) {
+        for (String segmentFileToDownload : toDownloadSegments) {
+
+        }
+    }
+
+    private void deleteExistingSegments(Directory storeDirectory) throws IOException {
+        Set<String> localSegmentFiles = Sets.newHashSet(storeDirectory.listAll());
+        for (String file : localSegmentFiles) {
+            storeDirectory.deleteFile(file);
+        }
     }
 
     private boolean localDirectoryContains(Directory localDirectory, String file, long checksum) {

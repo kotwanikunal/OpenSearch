@@ -15,7 +15,6 @@ import org.apache.lucene.index.CorruptIndexException;
 import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.SetOnce;
 import org.opensearch.common.StreamContext;
-import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
@@ -25,7 +24,6 @@ import org.opensearch.common.io.InputStreamContainer;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Path;
 import java.util.Objects;
 
 /**

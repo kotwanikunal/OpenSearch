@@ -45,7 +45,6 @@ import org.apache.lucene.store.IndexInput;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.ActionListener;
 import org.opensearch.action.StepListener;
-import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.routing.RecoverySource;
@@ -74,7 +73,6 @@ import org.opensearch.repositories.Repository;
 import org.opensearch.threadpool.ThreadPool;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.HashMap;
