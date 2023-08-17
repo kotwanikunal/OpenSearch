@@ -21,42 +21,40 @@ public class StreamCompletionListener implements ActionListener<InputStream> {
     private final String partFileName;
     private final Directory segmentDirectory;
     private final AtomicBoolean anyStreamFailed;
-    private final ActionListener<String> listener;
+    private final ActionListener<String> fileCompletionListener;
 
     public StreamCompletionListener(
         String partFileName,
         Directory segmentDirectory,
         AtomicBoolean anyStreamFailed,
-        ActionListener<String> listener
+        ActionListener<String> fileCompletionListener
     ) {
         this.partFileName = partFileName;
         this.segmentDirectory = segmentDirectory;
         this.anyStreamFailed = anyStreamFailed;
-        this.listener = listener;
+        this.fileCompletionListener = fileCompletionListener;
     }
 
     @Override
     public void onResponse(InputStream inputStream) {
-        if (!anyStreamFailed.get()) {
-            try (final IndexOutput segmentOutput = segmentDirectory.createOutput(partFileName, IOContext.DEFAULT); inputStream) {
-                byte[] buffer = new byte[inputStream.available()];
-                while ((inputStream.read(buffer)) != -1) {
-                    segmentOutput.writeBytes(buffer, 0, buffer.length);
+        try (inputStream) {
+            // Do not write new segments if any stream for this file has already failed
+            if (!anyStreamFailed.get()) {
+                try (final IndexOutput segmentOutput = segmentDirectory.createOutput(partFileName, IOContext.DEFAULT)) {
+                    byte[] buffer = new byte[inputStream.available()];
+                    while ((inputStream.read(buffer)) != -1) {
+                        segmentOutput.writeBytes(buffer, 0, buffer.length);
+                    }
                 }
-            } catch (IOException e) {
-                listener.onFailure(e);
+                fileCompletionListener.onResponse(partFileName);
             }
-            listener.onResponse(partFileName);
+        } catch (IOException e) {
+            onFailure(e);
         }
     }
 
     @Override
     public void onFailure(Exception e) {
-        try {
-            segmentDirectory.deleteFile(partFileName);
-        } catch (IOException ex) {
-            // Die silently?
-        }
-        listener.onFailure(e);
+        fileCompletionListener.onFailure(e);
     }
 }

@@ -217,6 +217,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
@@ -4655,10 +4656,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             // At this point, we need all the files to be downloaded before we can move ahead.
             Set<String> localSegmentFiles = Sets.newHashSet(storeDirectory.listAll());
 
-            CountDownLatch completionLatch = new CountDownLatch(1);
-            LatchedActionListener<Void> completionListener = new LatchedActionListener<>(new PlainActionFuture<Void>(), completionLatch);
-            copySegmentFiles(storeDirectory, remoteDirectory, null, uploadedSegments, overrideLocal, completionListener);
-            completionLatch.await();
+            copySegmentFiles(storeDirectory, remoteDirectory, null, uploadedSegments, overrideLocal);
 
             if (refreshLevelSegmentSync && remoteSegmentMetadata != null) {
                 try (
@@ -4704,7 +4702,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     }
                 }
             }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             throw new IndexShardRecoveryException(shardId, "Exception while copying segment files from remote segment store", e);
         } finally {
             store.decRef();
@@ -4740,14 +4738,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         store.incRef();
 
         try {
+
             String segmentsNFile = copySegmentFiles(
                 storeDirectory,
                 sourceRemoteDirectory,
                 remoteDirectory,
                 uploadedSegments,
-                overrideLocal,
-                new PlainActionFuture<>()
+                overrideLocal
             );
+
             if (segmentsNFile != null) {
                 try (
                     ChecksumIndexInput indexInput = new BufferedChecksumIndexInput(
@@ -4779,24 +4778,20 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         RemoteSegmentStoreDirectory sourceRemoteDirectory,
         RemoteSegmentStoreDirectory targetRemoteDirectory,
         Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments,
-        boolean overrideLocal,
-        ActionListener<Void> completionListener
+        boolean overrideLocal
     ) throws IOException {
 
         if (overrideLocal) {
             deleteExistingSegments(storeDirectory);
         }
 
-        Set<String> toDownloadSegments = Collections.synchronizedSet(new HashSet<>());
-        Set<String> skippedSegments = Collections.synchronizedSet(new HashSet<>());
+        Set<String> toDownloadSegments = new HashSet<>();
         String segmentNFile = null;
 
         for (String file : uploadedSegments.keySet()) {
             long checksum = Long.parseLong(uploadedSegments.get(file).getChecksum());
             if (overrideLocal || localDirectoryContains(storeDirectory, file, checksum) == false) {
                 toDownloadSegments.add(file);
-            } else {
-                skippedSegments.add(file);
             }
 
             if (file.startsWith(IndexFileNames.SEGMENTS)) {
@@ -4805,54 +4800,69 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             }
         }
 
-        Set<String> downloadedSegments = Collections.synchronizedSet(new HashSet<>());
-        Set<String> failedSegments = Collections.synchronizedSet(new HashSet<>());
+        if (!toDownloadSegments.isEmpty()) {
+            try {
+                CountDownLatch completionLatch = new CountDownLatch(1);
+                LatchedActionListener<Void> downloadsCompletionListener = new LatchedActionListener<>(
+                    new PlainActionFuture<>(),
+                    completionLatch
+                );
+                completionLatch.await();
 
-        ActionListener<String> filesDownloadListener = new ActionListener<>() {
+                downloadSegments(
+                    storeDirectory,
+                    sourceRemoteDirectory,
+                    targetRemoteDirectory,
+                    uploadedSegments,
+                    toDownloadSegments,
+                    downloadsCompletionListener
+                );
+
+                completionLatch.await();
+            } catch (Exception e) {
+                throw new IOException("Error occurred when downloading segments from remote store", e);
+            }
+        }
+
+        return segmentNFile;
+    }
+
+    private void downloadSegments(
+        Directory storeDirectory,
+        RemoteSegmentStoreDirectory sourceRemoteDirectory,
+        RemoteSegmentStoreDirectory targetRemoteDirectory,
+        Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments,
+        Set<String> toDownloadSegments,
+        ActionListener<Void> completionListener
+    ) {
+        AtomicInteger totalDownloadedSegments = new AtomicInteger(toDownloadSegments.size());
+
+        ActionListener<String> segmentsDownloadListener = new ActionListener<>() {
             @Override
             public void onResponse(String fileName) {
                 try {
-                    downloadedSegments.add(fileName);
                     if (targetRemoteDirectory != null) {
                         targetRemoteDirectory.copyFrom(storeDirectory, fileName, fileName, IOContext.DEFAULT);
                     }
-                    if (downloadedSegments.containsAll(toDownloadSegments)) {
+                    if (totalDownloadedSegments.decrementAndGet() == 0) {
                         completionListener.onResponse(null);
                     }
                 } catch (IOException ex) {
-                    // logger.error("Failed to download segment file {} from the remote store", fileName);
-                    // failedSegments.add(fileName);
+                    logger.error("Failed to download segment file {} from the remote store", fileName);
+                    onFailure(ex);
                 }
             }
 
             @Override
             public void onFailure(Exception e) {
-                // TODO: Error Handling and Retry for individual file
-                completionListener.onFailure(e);
+                logger.error("Failed to download one of the segment files from the remote store", e);
+                throw new RuntimeException(e);
             }
         };
 
-        if (toDownloadSegments.isEmpty()) {
-            completionListener.onResponse(null);
-        }
-
         toDownloadSegments.forEach(
-            file -> sourceRemoteDirectory.copyTo(
-                storeDirectory,
-                file,
-                uploadedSegments.get(file).getLength(),
-                IOContext.DEFAULT,
-                filesDownloadListener
-            )
+            file -> sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), segmentsDownloadListener)
         );
-
-        return segmentNFile;
-    }
-
-    private void downloadSegments(Set<String> toDownloadSegments) {
-        for (String segmentFileToDownload : toDownloadSegments) {
-
-        }
     }
 
     private void deleteExistingSegments(Directory storeDirectory) throws IOException {

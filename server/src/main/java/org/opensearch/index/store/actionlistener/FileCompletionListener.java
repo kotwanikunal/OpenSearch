@@ -50,19 +50,8 @@ public class FileCompletionListener implements ActionListener<String> {
 
     @Override
     public void onResponse(String streamFileName) {
-        if (downloadedPartFiles.incrementAndGet() == numStreams) {
-            try (IndexOutput segmentOutput = segmentDirectory.createOutput(segmentFileName, IOContext.DEFAULT)) {
-                for (String partFileName : toDownloadPartFileNames) {
-                    try (IndexInput indexInput = segmentDirectory.openInput(partFileName, IOContext.DEFAULT)) {
-                        for (int i = 0; i < indexInput.length(); i++) {
-                            segmentOutput.writeByte(indexInput.readByte());
-                        }
-                    }
-                    segmentDirectory.deleteFile(partFileName);
-                }
-            } catch (IOException e) {
-                onFailure(e);
-            }
+        if (!anyStreamFailed.get() && downloadedPartFiles.incrementAndGet() == numStreams) {
+            createCompleteSegmentFile();
             segmentCompletionListener.onResponse(segmentFileName);
         }
     }
@@ -87,6 +76,21 @@ public class FileCompletionListener implements ActionListener<String> {
         if (!anyStreamFailed.get()) {
             segmentCompletionListener.onFailure(e);
             anyStreamFailed.compareAndSet(false, true);
+        }
+    }
+
+    private void createCompleteSegmentFile() {
+        try (IndexOutput segmentFile = segmentDirectory.createOutput(segmentFileName, IOContext.DEFAULT)) {
+            for (String partFileName : toDownloadPartFileNames) {
+                try (IndexInput partFile = segmentDirectory.openInput(partFileName, IOContext.DEFAULT)) {
+                    for (int i = 0; i < partFile.length(); i++) {
+                        segmentFile.writeByte(partFile.readByte());
+                    }
+                }
+                segmentDirectory.deleteFile(partFileName);
+            }
+        } catch (IOException e) {
+            onFailure(e);
         }
     }
 }

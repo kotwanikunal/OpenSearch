@@ -417,10 +417,9 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      *
      * @param to       directory where the file has to be copied
      * @param src      name of the file
-     * @param context  context for the IO operation
      */
-    public void copyTo(Directory to, String src, long blobLength, IOContext context, ActionListener<String> fileListener) {
-        downloadBlob(to, src, blobLength, fileListener);
+    public void copyTo(Directory to, String src, long blobLength, ActionListener<String> segmentCompletionListener) {
+        downloadBlob(to, src, blobLength, segmentCompletionListener);
     }
 
     private void downloadBlob(
