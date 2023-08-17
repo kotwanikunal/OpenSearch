@@ -35,6 +35,8 @@ import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.util.ByteUtils;
 import org.opensearch.index.remote.RemoteStoreUtils;
+import org.opensearch.index.store.actionlistener.FileCompletionListener;
+import org.opensearch.index.store.actionlistener.StreamCompletionListener;
 import org.opensearch.index.store.exception.ChecksumCombinationException;
 import org.opensearch.index.store.lockmanager.FileLockInfo;
 import org.opensearch.index.store.lockmanager.RemoteStoreCommitLevelLockManager;
@@ -45,10 +47,8 @@ import org.opensearch.threadpool.ThreadPool;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -59,7 +59,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.zip.CRC32;
@@ -456,126 +455,13 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             long length = end - start;
             partFileNames.add(partFileName);
 
-            final FileStreamListener fileStreamListener = new FileStreamListener(
+            final StreamCompletionListener streamCompletionListener = new StreamCompletionListener(
                 partFileName,
                 segmentDirectory,
                 anyStreamFailed,
                 fileCompletionListener
             );
-            blobContainer.readBlobAsync(blobName, start, length, fileStreamListener);
-        }
-    }
-
-    private static class FileCompletionListener implements ActionListener<String> {
-        private final int numStreams;
-        private final String segmentFileName;
-        private final Directory segmentDirectory;
-        private final List<String> toDownloadPartFileNames;
-        private final AtomicInteger downloadedPartFiles;
-        private final AtomicBoolean anyStreamFailed;
-        private final ActionListener<String> segmentCompletionListener;
-
-        public FileCompletionListener(
-            int numStreams,
-            String segmentFileName,
-            Directory segmentDirectory,
-            List<String> toDownloadPartFileNames,
-            AtomicBoolean anyStreamFailed,
-            ActionListener<String> segmentCompletionListener
-        ) {
-            this.downloadedPartFiles = new AtomicInteger();
-            this.numStreams = numStreams;
-            this.segmentFileName = segmentFileName;
-            this.segmentDirectory = segmentDirectory;
-            this.anyStreamFailed = anyStreamFailed;
-            this.toDownloadPartFileNames = toDownloadPartFileNames;
-            this.segmentCompletionListener = segmentCompletionListener;
-        }
-
-        @Override
-        public void onResponse(String streamFileName) {
-            if (downloadedPartFiles.incrementAndGet() == numStreams) {
-                try (IndexOutput segmentOutput = segmentDirectory.createOutput(segmentFileName, IOContext.DEFAULT)) {
-                    for (String partFileName : toDownloadPartFileNames) {
-                        try (IndexInput indexInput = segmentDirectory.openInput(partFileName, IOContext.DEFAULT)) {
-                            for (int i = 0; i < indexInput.length(); i++) {
-                                segmentOutput.writeByte(indexInput.readByte());
-                            }
-                        }
-                        segmentDirectory.deleteFile(partFileName);
-                    }
-                } catch (IOException e) {
-                    onFailure(e);
-                }
-                segmentCompletionListener.onResponse(segmentFileName);
-            }
-        }
-
-        @Override
-        public void onFailure(Exception e) {
-            try {
-                Set<String> tempFilesInDirectory = new HashSet<>(Arrays.asList(segmentDirectory.listAll()));
-                if (tempFilesInDirectory.contains(segmentFileName)) {
-                    segmentDirectory.deleteFile(segmentFileName);
-                }
-
-                tempFilesInDirectory.retainAll(toDownloadPartFileNames);
-                for (String tempFile : tempFilesInDirectory) {
-                    segmentDirectory.deleteFile(tempFile);
-                }
-
-            } catch (IOException ex) {
-                // Die silently?
-            }
-
-            if (!anyStreamFailed.get()) {
-                segmentCompletionListener.onFailure(e);
-                anyStreamFailed.compareAndSet(false, true);
-            }
-        }
-    }
-
-    private static class FileStreamListener implements ActionListener<InputStream> {
-        private final String partFileName;
-        private final Directory segmentDirectory;
-        private final AtomicBoolean anyStreamFailed;
-        private final ActionListener<String> listener;
-
-        private FileStreamListener(
-            String partFileName,
-            Directory segmentDirectory,
-            AtomicBoolean anyStreamFailed,
-            ActionListener<String> listener
-        ) {
-            this.partFileName = partFileName;
-            this.segmentDirectory = segmentDirectory;
-            this.anyStreamFailed = anyStreamFailed;
-            this.listener = listener;
-        }
-
-        @Override
-        public void onResponse(InputStream inputStream) {
-            if (!anyStreamFailed.get()) {
-                try (final IndexOutput segmentOutput = segmentDirectory.createOutput(partFileName, IOContext.DEFAULT); inputStream) {
-                    byte[] buffer = new byte[inputStream.available()];
-                    while ((inputStream.read(buffer)) != -1) {
-                        segmentOutput.writeBytes(buffer, 0, buffer.length);
-                    }
-                } catch (IOException e) {
-                    listener.onFailure(e);
-                }
-                listener.onResponse(partFileName);
-            }
-        }
-
-        @Override
-        public void onFailure(Exception e) {
-            try {
-                segmentDirectory.deleteFile(partFileName);
-            } catch (IOException ex) {
-                // Die silently?
-            }
-            listener.onFailure(e);
+            blobContainer.readBlobAsync(blobName, start, length, streamCompletionListener);
         }
     }
 
