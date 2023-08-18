@@ -94,21 +94,6 @@ public interface BlobContainer {
     InputStream readBlob(String blobName, long position, long length) throws IOException;
 
     /**
-     * Creates and populates a list of {@link java.io.InputStream} from the blob stored within the repository, returned
-     * within an async callback using the {@link ReadContext} object.
-     * Defaults to using multiple streams, when feasible, unless a single stream is forced using @param forceSingleStream.
-     * An {@link IOException} is thrown if requesting any of the input streams fails, or reading metadata for the
-     * requested blob fails
-     * @param blobName          Name of the blob to be read using the async mechanism
-     * @param listener  Async listener for {@link ReadContext} object which serves the input streams and other metadata for the blob
-     * @throws IOException if any of the input streams could not be requested, or reading metadata for requested blob fails
-     */
-    @ExperimentalApi
-    default void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
      * Provides a hint to clients for a suitable length to use with {@link BlobContainer#readBlob(String, long, long)}.
      *
      * Some blob containers have nontrivial costs attached to each readBlob call, so it is a good idea for consumers to speculatively
