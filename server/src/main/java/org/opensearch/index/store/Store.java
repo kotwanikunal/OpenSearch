@@ -93,6 +93,7 @@ import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.AbstractIndexShardComponent;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.index.shard.ShardPath;
 import org.opensearch.index.translog.Translog;
 
 import java.io.Closeable;
@@ -182,6 +183,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     private final ReentrantReadWriteLock metadataLock = new ReentrantReadWriteLock();
     private final ShardLock shardLock;
     private final OnClose onClose;
+    private ShardPath shardPath;
 
     // used to ref count files when a new Reader is opened for PIT/Scroll queries
     // prevents segment files deletion until the PIT/Scroll expires or is discarded
@@ -212,6 +214,14 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         assert onClose != null;
         assert shardLock != null;
         assert shardLock.getShardId().equals(shardId);
+    }
+
+    public void setShardPath(ShardPath shardPath) {
+        this.shardPath = shardPath;
+    }
+
+    public ShardPath getShardPath() {
+        return this.shardPath;
     }
 
     public Directory directory() {

@@ -48,6 +48,7 @@ import org.opensearch.threadpool.ThreadPool;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -418,8 +419,19 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * @param to       directory where the file has to be copied
      * @param src      name of the file
      */
-    public void copyTo(Directory to, String src, long blobLength, ActionListener<String> segmentCompletionListener) {
-        downloadBlob(to, src, blobLength, segmentCompletionListener);
+    public void copyTo(
+        Directory to,
+        String src,
+        long blobLength,
+        Path segmentDirectoryPath,
+        ActionListener<String> segmentCompletionListener
+    ) {
+        assert remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer;
+        VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
+        final String blobName = getExistingRemoteFilename(src);
+        Path destinationPath = segmentDirectoryPath.resolve(src);
+        blobContainer.asyncBlobDownload(blobName, destinationPath, segmentCompletionListener);
+        // downloadBlob(to, src, blobLength, segmentCompletionListener);
     }
 
     private void downloadBlob(

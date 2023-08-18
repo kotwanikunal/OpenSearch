@@ -4734,6 +4734,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments = sourceRemoteDirectory
             .initializeToSpecificCommit(primaryTerm, commitGeneration)
             .getMetadata();
+
         final Directory storeDirectory = store.directory();
         store.incRef();
 
@@ -4807,7 +4808,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     new PlainActionFuture<>(),
                     completionLatch
                 );
-                completionLatch.await();
 
                 downloadSegments(
                     storeDirectory,
@@ -4861,7 +4861,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         };
 
         toDownloadSegments.forEach(
-            file -> sourceRemoteDirectory.copyTo(storeDirectory, file, uploadedSegments.get(file).getLength(), segmentsDownloadListener)
+            file -> sourceRemoteDirectory.copyTo(
+                storeDirectory,
+                file,
+                uploadedSegments.get(file).getLength(),
+                store.getShardPath().resolveIndex(),
+                segmentsDownloadListener
+            )
         );
     }
 
