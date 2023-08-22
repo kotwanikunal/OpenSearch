@@ -8,20 +8,19 @@
 
 package org.opensearch.common.blobstore;
 
-import com.google.protobuf.ExperimentalApi;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.opensearch.action.ActionListener;
-import org.opensearch.common.blobstore.stream.listener.FileCompletionListener;
-import org.opensearch.common.blobstore.stream.listener.StreamCompletionListener;
 import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
+import org.opensearch.common.io.InputStreamContainer;
+
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.nio.file.StandardOpenOption;
 
 /**
  * An extension of {@link BlobContainer} that adds {@link VerifyingMultiStreamBlobContainer#asyncBlobUpload} to allow
@@ -30,6 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @opensearch.internal
  */
 public interface VerifyingMultiStreamBlobContainer extends BlobContainer {
+
+    Logger logger = LogManager.getLogger(VerifyingMultiStreamBlobContainer.class);
 
     /**
      * Reads blob content from multiple streams, each from a specific part of the file, which is provided by the
@@ -43,63 +44,59 @@ public interface VerifyingMultiStreamBlobContainer extends BlobContainer {
     void asyncBlobUpload(WriteContext writeContext, ActionListener<Void> completionListener) throws IOException;
 
     /**
-     * Creates and populates a list of {@link java.io.InputStream} from the blob stored within the repository, returned
-     * within an async callback using the {@link ReadContext} object.
-     * Defaults to using multiple streams, when feasible, unless a single stream is forced using @param forceSingleStream.
-     * An {@link IOException} is thrown if requesting any of the input streams fails, or reading metadata for the
-     * requested blob fails
-     * @param blobName          Name of the blob to be read using the async mechanism
-     * @param listener  Async listener for {@link ReadContext} object which serves the input streams and other metadata for the blob
-     * @throws IOException if any of the input streams could not be requested, or reading metadata for requested blob fails
+     * Creates an async callback of an {@link java.io.InputStream} for the specified blob within the container.
+     * An {@link IOException} is thrown if requesting the input stream fails.
+     * @param blobName The name of the blob to get an {@link InputStream} for.
+     * @param listener  Async listener for {@link InputStream} object which serves the input streams and other metadata for the blob
      */
-    @ExperimentalApi
-    default void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) {
-        throw new UnsupportedOperationException();
-    }
-
-    default String blobChecksum(String blobName) throws IOException {
-        throw new UnsupportedOperationException();
-    }
+    void readBlobAsync(String blobName, ActionListener<ReadContext> listener);
 
     default void asyncBlobDownload(String blobName, Path segmentFileLocation, ActionListener<String> segmentCompletionListener) {
         try {
-            final long segmentSize = listBlobs().get(blobName).length();
-            final long optimalStreamSize = readBlobPreferredLength();
-            final int numStreams = (int) Math.ceil(segmentSize * 1.0 / optimalStreamSize);
+            ActionListener<ReadContext> readBlobListener = new ActionListener<>() {
+                @Override
+                public void onResponse(ReadContext readContext) {
+                    int numParts = readContext.getNumberOfParts();
+                    for (int partNumber = 0; partNumber < numParts; partNumber++) {
+                        logger.error(
+                            "[MultiStream] Started part {} download  for {}",
+                            partNumber,
+                            segmentFileLocation.getFileName().toString()
+                        );
+                        try (
+                            FileChannel fileChannel = FileChannel.open(
+                                segmentFileLocation,
+                                StandardOpenOption.CREATE,
+                                StandardOpenOption.WRITE
+                            )
+                        ) {
+                            InputStreamContainer inputStreamContainer = readContext.provideStream(partNumber);
+                            long offset = inputStreamContainer.getOffset();
+                            long partSize = inputStreamContainer.getContentLength();
+                            try (InputStream inputStream = inputStreamContainer.getInputStream()) {
+                                fileChannel.transferFrom(Channels.newChannel(inputStream), offset, partSize);
+                                logger.error(
+                                    "[MultiStream] Completed part {} download  for {}",
+                                    partNumber,
+                                    segmentFileLocation.getFileName().toString()
+                                );
+                            }
+                        } catch (IOException e) {
+                            segmentCompletionListener.onFailure(e);
+                        }
+                    }
+                    segmentCompletionListener.onResponse(blobName);
+                }
 
-            final AtomicBoolean anyStreamFailed = new AtomicBoolean();
-            final List<String> partFileNames = Collections.synchronizedList(new ArrayList<>());
+                @Override
+                public void onFailure(Exception e) {
+                    segmentCompletionListener.onFailure(e);
+                }
+            };
 
-            final String segmentFileName = segmentFileLocation.getFileName().toString();
-            final Path segmentDirectory = segmentFileLocation.getParent();
-
-            final FileCompletionListener fileCompletionListener = new FileCompletionListener(
-                numStreams,
-                segmentFileName,
-                segmentDirectory,
-                partFileNames,
-                anyStreamFailed,
-                segmentCompletionListener
-            );
-
-            for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
-                String partFileName = UUID.randomUUID().toString();
-                long start = streamNumber * optimalStreamSize;
-                long end = Math.min(segmentSize, ((streamNumber + 1) * optimalStreamSize));
-                long length = end - start;
-                partFileNames.add(partFileName);
-
-                final StreamCompletionListener streamCompletionListener = new StreamCompletionListener(
-                    partFileName,
-                    segmentDirectory,
-                    anyStreamFailed,
-                    fileCompletionListener
-                );
-                readBlobAsync(blobName, start, length, streamCompletionListener);
-            }
+            readBlobAsync(blobName, readBlobListener);
         } catch (Exception e) {
             segmentCompletionListener.onFailure(e);
         }
-
     }
 }

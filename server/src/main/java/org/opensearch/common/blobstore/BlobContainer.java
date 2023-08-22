@@ -32,9 +32,7 @@
 
 package org.opensearch.common.blobstore;
 
-import com.google.protobuf.ExperimentalApi;
 import org.opensearch.action.ActionListener;
-import org.opensearch.common.blobstore.stream.read.ReadContext;
 
 import java.io.IOException;
 import java.io.InputStream;

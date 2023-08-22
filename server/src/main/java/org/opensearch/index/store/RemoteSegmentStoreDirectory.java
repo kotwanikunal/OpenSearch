@@ -35,8 +35,6 @@ import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.util.ByteUtils;
 import org.opensearch.index.remote.RemoteStoreUtils;
-import org.opensearch.index.store.actionlistener.FileCompletionListener;
-import org.opensearch.index.store.actionlistener.StreamCompletionListener;
 import org.opensearch.index.store.exception.ChecksumCombinationException;
 import org.opensearch.index.store.lockmanager.FileLockInfo;
 import org.opensearch.index.store.lockmanager.RemoteStoreCommitLevelLockManager;
@@ -49,7 +47,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -57,7 +54,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -413,68 +409,71 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     }
 
     /**
-     * Provides an async mechanism to copy file from a remote directory to the provided directory utilizing multi-stream
-     * downloads
-     *
-     * @param to       directory where the file has to be copied
-     * @param src      name of the file
+     * Copies the segment from the remote directory to a local directory, preferably using an async mechanism using multi stream support.
+     * @param storeDirectory The directory where the segment needs to be copied to
+     * @param src The name of the segment file
+     * @param segmentDirectoryPath The file path for the segment directory
+     * @param segmentCompletionListener Async listener which should be notified once the segment is downloaded or in case of failure
      */
-    public void copyTo(
-        Directory to,
-        String src,
-        long blobLength,
-        Path segmentDirectoryPath,
-        ActionListener<String> segmentCompletionListener
-    ) {
-        assert remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer;
-        VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
+    public void copyTo(Directory storeDirectory, String src, Path segmentDirectoryPath, ActionListener<String> segmentCompletionListener) {
         final String blobName = getExistingRemoteFilename(src);
-        Path destinationPath = segmentDirectoryPath.resolve(src);
-        blobContainer.asyncBlobDownload(blobName, destinationPath, segmentCompletionListener);
-        // downloadBlob(to, src, blobLength, segmentCompletionListener);
-    }
+        if (remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer) {
+            VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
+            Path destinationPath = segmentDirectoryPath.resolve(src);
+            blobContainer.asyncBlobDownload(blobName, destinationPath, segmentCompletionListener);
+        } else {
+            // Fallback to older mechanism of downloading the file
+            try {
+                storeDirectory.copyFrom(this, src, src, IOContext.DEFAULT);
+                segmentCompletionListener.onResponse(src);
+            } catch (IOException e) {
+                segmentCompletionListener.onFailure(e);
+            }
 
-    private void downloadBlob(
-        Directory segmentDirectory,
-        String segmentFileName,
-        long segmentSize,
-        ActionListener<String> segmentCompletionListener
-    ) {
-        assert remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer;
-        VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
-
-        final String blobName = getExistingRemoteFilename(segmentFileName);
-        final long optimalStreamSize = blobContainer.readBlobPreferredLength();
-        final int numStreams = (int) Math.ceil(segmentSize * 1.0 / optimalStreamSize);
-
-        final AtomicBoolean anyStreamFailed = new AtomicBoolean();
-        final List<String> partFileNames = Collections.synchronizedList(new ArrayList<>());
-
-        final FileCompletionListener fileCompletionListener = new FileCompletionListener(
-            numStreams,
-            segmentFileName,
-            segmentDirectory,
-            partFileNames,
-            anyStreamFailed,
-            segmentCompletionListener
-        );
-
-        for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
-            String partFileName = UUID.randomUUID().toString();
-            long start = streamNumber * optimalStreamSize;
-            long end = Math.min(segmentSize, ((streamNumber + 1) * optimalStreamSize));
-            long length = end - start;
-            partFileNames.add(partFileName);
-
-            final StreamCompletionListener streamCompletionListener = new StreamCompletionListener(
-                partFileName,
-                segmentDirectory,
-                anyStreamFailed,
-                fileCompletionListener
-            );
-            blobContainer.readBlobAsync(blobName, start, length, streamCompletionListener);
         }
     }
+
+    // private void downloadBlob(
+    // Directory segmentDirectory,
+    // String segmentFileName,
+    // long segmentSize,
+    // ActionListener<String> segmentCompletionListener
+    // ) {
+    // assert remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer;
+    // VerifyingMultiStreamBlobContainer blobContainer = (VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
+    //
+    // final String blobName = getExistingRemoteFilename(segmentFileName);
+    // final long optimalStreamSize = blobContainer.readBlobPreferredLength();
+    // final int numStreams = (int) Math.ceil(segmentSize * 1.0 / optimalStreamSize);
+    //
+    // final AtomicBoolean anyStreamFailed = new AtomicBoolean();
+    // final List<String> partFileNames = Collections.synchronizedList(new ArrayList<>());
+    //
+    // final FileCompletionListener fileCompletionListener = new FileCompletionListener(
+    // numStreams,
+    // segmentFileName,
+    // segmentDirectory,
+    // partFileNames,
+    // anyStreamFailed,
+    // segmentCompletionListener
+    // );
+    //
+    // for (int streamNumber = 0; streamNumber < numStreams; streamNumber++) {
+    // String partFileName = UUID.randomUUID().toString();
+    // long start = streamNumber * optimalStreamSize;
+    // long end = Math.min(segmentSize, ((streamNumber + 1) * optimalStreamSize));
+    // long length = end - start;
+    // partFileNames.add(partFileName);
+    //
+    // final StreamCompletionListener streamCompletionListener = new StreamCompletionListener(
+    // partFileName,
+    // segmentDirectory,
+    // anyStreamFailed,
+    // fileCompletionListener
+    // );
+    // blobContainer.readBlobAsync(blobName, start, length, streamCompletionListener);
+    // }
+    // }
 
     private void uploadBlob(Directory from, String src, String remoteFileName, IOContext ioContext, ActionListener<Void> listener)
         throws Exception {

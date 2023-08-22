@@ -46,6 +46,7 @@ import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStoreException;
 import org.opensearch.common.blobstore.DeleteResult;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
+import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.support.AbstractBlobContainer;
@@ -53,7 +54,6 @@ import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.unit.ByteSizeUnit;
 import org.opensearch.common.unit.ByteSizeValue;
-import org.opensearch.repositories.s3.async.DownloadRequest;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
@@ -212,37 +212,11 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
     }
 
     @Override
-    public void readBlobAsync(String blobName, long position, long length, ActionListener<InputStream> listener) {
-        if (position < 0L) {
-            throw new IllegalArgumentException("position must be non-negative");
-        }
-        if (length < 0) {
-            throw new IllegalArgumentException("length must be non-negative");
-        }
-        if (length == 0) {
-            listener.onResponse(new ByteArrayInputStream(new byte[0]));
-        } else {
-            try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {
-                S3AsyncClient s3AsyncClient = amazonS3Reference.get().client();
-                DownloadRequest downloadRequest = new DownloadRequest(
-                    blobStore.bucket(),
-                    blobName,
-                    position,
-                    Math.addExact(position, length - 1)
-                );
-                CompletableFuture<InputStream> inputStreamFuture = blobStore.getAsyncTransferManager()
-                    .downloadObjectFutureStream(s3AsyncClient, downloadRequest);
-                inputStreamFuture.whenComplete((inputStream, error) -> {
-                    if (error != null) {
-                        listener.onFailure(new IOException(error));
-                    } else {
-                        listener.onResponse(inputStream);
-                    }
-                });
-            }
-        }
-
+    public void readBlobAsync(String blobName, ActionListener<ReadContext> listener) {
+        throw new UnsupportedOperationException();
     }
+
+    //
 
     // @Override
     // public CompletableFuture<ReadContext> asyncBlobDownload(String blobName, boolean forceSingleStream) throws IOException {

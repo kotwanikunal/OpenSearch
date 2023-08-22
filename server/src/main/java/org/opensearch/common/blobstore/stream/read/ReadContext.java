@@ -8,43 +8,32 @@
 
 package org.opensearch.common.blobstore.stream.read;
 
-import java.io.InputStream;
-import java.util.List;
+import org.opensearch.common.CheckedTriFunction;
+import org.opensearch.common.StreamContext;
+import org.opensearch.common.io.InputStreamContainer;
+
+import java.io.IOException;
 
 /**
- * WriteContext is used to encapsulate all data needed by <code>BlobContainer#readStreams</code>
+ * ReadContext is used to encapsulate all data needed by <code>BlobContainer#readStreams</code>
  *
  * @opensearch.internal
  */
-public class ReadContext {
-    private final List<InputStream> blobInputStreams;
-
+public class ReadContext extends StreamContext {
     private final String blobChecksum;
 
-    private final int numStreams;
-
-    private final long blobSize;
-
-    public ReadContext(List<InputStream> blobInputStreams, String blobChecksum, int numStreams, long blobSize) {
-        this.blobInputStreams = blobInputStreams;
+    public ReadContext(
+        CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException> streamSupplier,
+        long partSize,
+        long lastPartSize,
+        int numberOfParts,
+        String blobChecksum
+    ) {
+        super(streamSupplier, partSize, lastPartSize, numberOfParts);
         this.blobChecksum = blobChecksum;
-        this.numStreams = numStreams;
-        this.blobSize = blobSize;
-    }
-
-    public List<InputStream> getBlobInputStreams() {
-        return blobInputStreams;
     }
 
     public String getBlobChecksum() {
         return blobChecksum;
-    }
-
-    public int getNumStreams() {
-        return numStreams;
-    }
-
-    public long getBlobSize() {
-        return blobSize;
     }
 }
