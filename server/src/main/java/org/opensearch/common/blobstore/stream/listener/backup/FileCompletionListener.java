@@ -6,7 +6,7 @@
  * compatible open source license.
  */
 
-package org.opensearch.common.blobstore.stream.listener;
+package org.opensearch.common.blobstore.stream.listener.backup;
 
 import org.opensearch.action.ActionListener;
 

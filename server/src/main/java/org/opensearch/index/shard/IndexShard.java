@@ -4816,7 +4816,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         storeDirectory,
                         sourceRemoteDirectory,
                         targetRemoteDirectory,
-                        uploadedSegments,
                         toDownloadSegments,
                         downloadsCompletionListener
                     );
@@ -4838,7 +4837,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         Directory storeDirectory,
         RemoteSegmentStoreDirectory sourceRemoteDirectory,
         RemoteSegmentStoreDirectory targetRemoteDirectory,
-        Map<String, RemoteSegmentStoreDirectory.UploadedSegmentMetadata> uploadedSegments,
         Set<String> toDownloadSegments,
         ActionListener<Void> completionListener
     ) {
