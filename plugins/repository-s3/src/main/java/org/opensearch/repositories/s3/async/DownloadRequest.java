@@ -14,14 +14,12 @@ package org.opensearch.repositories.s3.async;
 public class DownloadRequest {
     private final String bucket;
     private final String key;
-    private final long start;
-    private final long end;
+    private final int partNumber;
 
-    public DownloadRequest(String bucket, String key, long start, long end) {
+    public DownloadRequest(String bucket, String key, int partNumber) {
         this.bucket = bucket;
         this.key = key;
-        this.start = start;
-        this.end = end;
+        this.partNumber = partNumber;
     }
 
     public String getBucket() {
@@ -32,11 +30,8 @@ public class DownloadRequest {
         return key;
     }
 
-    public long getStart() {
-        return start;
+    public int getPartNumber() {
+        return partNumber;
     }
 
-    public long getEnd() {
-        return end;
-    }
 }

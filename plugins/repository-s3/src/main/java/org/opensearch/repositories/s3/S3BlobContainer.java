@@ -37,6 +37,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.ActionListener;
+import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.SetOnce;
 import org.opensearch.common.StreamContext;
@@ -52,10 +53,13 @@ import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.support.AbstractBlobContainer;
 import org.opensearch.common.blobstore.support.PlainBlobMetadata;
 import org.opensearch.common.collect.Tuple;
+import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.unit.ByteSizeUnit;
 import org.opensearch.common.unit.ByteSizeValue;
+import org.opensearch.repositories.s3.async.DownloadRequest;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.internal.util.ServiceMetadataUtils;
 import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.CommonPrefix;
 import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
@@ -65,10 +69,13 @@ import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
+import software.amazon.awssdk.services.s3.model.GetObjectAttributesRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectAttributesResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.ObjectAttributes;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Error;
@@ -90,6 +97,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -213,7 +221,46 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
 
     @Override
     public void readBlobAsync(String blobName, ActionListener<ReadContext> listener) {
-        throw new UnsupportedOperationException();
+        try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {
+            final S3AsyncClient s3AsyncClient = amazonS3Reference.get().client();
+            final String bucketName = blobStore.bucket();
+
+            // Fetch object part metadata
+            GetObjectAttributesRequest getObjectAttributesRequest = GetObjectAttributesRequest.builder()
+                .bucket(bucketName)
+                .key(blobName)
+                .objectAttributes(ObjectAttributes.CHECKSUM, ObjectAttributes.OBJECT_SIZE, ObjectAttributes.OBJECT_PARTS)
+                .build();
+
+            GetObjectAttributesResponse blobMetadata = s3AsyncClient.getObjectAttributes(getObjectAttributesRequest).join();
+
+            final long blobSize = blobMetadata.objectSize();
+            final int numParts = blobMetadata.objectParts().totalPartsCount();
+
+            final List<CompletableFuture<InputStreamContainer>> blobInputStreamsFuture = new ArrayList<>();
+            final Map<Integer, InputStreamContainer> blobInputStreams = new ConcurrentHashMap<>();
+
+            for (int partNumber = 0; partNumber < numParts; partNumber++) {
+                int finalPartNumber = partNumber;
+                blobInputStreamsFuture.add(
+                    blobStore.getAsyncTransferManager()
+                        .getPartInputStream(s3AsyncClient, bucketName, blobName, partNumber)
+                        // TODO: Error handling
+                        .whenComplete((data, error) -> blobInputStreams.put(finalPartNumber, data))
+                );
+            }
+
+            CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException> streamSupplier =
+                    ((partNo, size, position) -> blobInputStreams.get(partNo));
+
+            CompletableFuture.allOf(blobInputStreamsFuture.toArray(CompletableFuture[]::new)).whenComplete((data, error) -> {
+                if (error != null) {
+                    listener.onFailure(new IOException(error));
+                } else {
+                    listener.onResponse(new ReadContext(streamSupplier, blobSize, -1, numParts, null));
+                }
+            });
+        }
     }
 
     //
