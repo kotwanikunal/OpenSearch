@@ -10,17 +10,10 @@ package org.opensearch.common.blobstore.stream.listener.backup;
 
 import org.opensearch.action.ActionListener;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class FileCompletionListener implements ActionListener<String> {
     private final int numStreams;
@@ -59,28 +52,28 @@ public class FileCompletionListener implements ActionListener<String> {
 
     @Override
     public void onFailure(Exception e) {
-        try (Stream<Path> segmentDirectoryStream = Files.list(segmentDirectory)) {
-            Set<String> tempFilesInDirectory = segmentDirectoryStream.filter(path -> !path.toFile().isDirectory())
-                .map(file -> file.toFile().getName())
-                .collect(Collectors.toSet());
-
-            if (tempFilesInDirectory.contains(segmentFileName)) {
-                Files.delete(segmentDirectory.resolve(segmentFileName));
-            }
-
-            tempFilesInDirectory.retainAll(toDownloadPartFileNames);
-            for (String tempFile : tempFilesInDirectory) {
-                Files.delete(segmentDirectory.resolve(tempFile));
-            }
-
-        } catch (IOException ex) {
-            // Die silently?
-        }
-
-        if (!anyStreamFailed.get()) {
-            segmentCompletionListener.onFailure(e);
-            anyStreamFailed.compareAndSet(false, true);
-        }
+        // try (Stream<Path> segmentDirectoryStream = Files.list(segmentDirectory)) {
+        // Set<String> tempFilesInDirectory = segmentDirectoryStream.filter(path -> !path.toFile().isDirectory())
+        // .map(file -> file.toFile().getName())
+        // .collect(Collectors.toSet());
+        //
+        // if (tempFilesInDirectory.contains(segmentFileName)) {
+        // Files.delete(segmentDirectory.resolve(segmentFileName));
+        // }
+        //
+        // tempFilesInDirectory.retainAll(toDownloadPartFileNames);
+        // for (String tempFile : tempFilesInDirectory) {
+        // Files.delete(segmentDirectory.resolve(tempFile));
+        // }
+        //
+        // } catch (IOException ex) {
+        // // Die silently?
+        // }
+        //
+        // if (!anyStreamFailed.get()) {
+        // segmentCompletionListener.onFailure(e);
+        // anyStreamFailed.compareAndSet(false, true);
+        // }
     }
 
     private void performChecksum() {
@@ -88,19 +81,19 @@ public class FileCompletionListener implements ActionListener<String> {
     }
 
     private void createCompleteSegmentFile() {
-        try {
-            Path segmentFilePath = segmentDirectory.resolve(segmentFileName);
-            try (OutputStream segmentFile = Files.newOutputStream(segmentFilePath)) {
-                for (String partFileName : toDownloadPartFileNames) {
-                    Path partFilePath = segmentDirectory.resolve(partFileName);
-                    try (InputStream partFile = Files.newInputStream(partFilePath)) {
-                        partFile.transferTo(segmentFile);
-                    }
-                    Files.delete(partFilePath);
-                }
-            }
-        } catch (IOException e) {
-            onFailure(e);
-        }
+        // try {
+        // Path segmentFilePath = segmentDirectory.resolve(segmentFileName);
+        // try (OutputStream segmentFile = Files.newOutputStream(segmentFilePath)) {
+        // for (String partFileName : toDownloadPartFileNames) {
+        // Path partFilePath = segmentDirectory.resolve(partFileName);
+        // try (InputStream partFile = Files.newInputStream(partFilePath)) {
+        // partFile.transferTo(segmentFile);
+        // }
+        // Files.delete(partFilePath);
+        // }
+        // }
+        // } catch (IOException e) {
+        // onFailure(e);
+        // }
     }
 }

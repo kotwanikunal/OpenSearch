@@ -12,7 +12,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.CorruptIndexException;
 import org.opensearch.action.ActionListener;
-import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.io.InputStreamContainer;
@@ -131,21 +130,19 @@ public class MockFsVerifyingBlobContainer extends FsBlobContainer implements Ver
             try {
                 long contentLength = listBlobs().get(blobName).length();
                 long partSize = contentLength / 10;
-                long lastPartSize = (contentLength % partSize) != 0 ? contentLength % partSize : partSize;
                 int numberOfParts = (int) ((contentLength % partSize) == 0 ? contentLength / partSize : (contentLength / partSize) + 1);
-                ReadContext readContext = new ReadContext(getTransferPartStreamSupplier(blobName), partSize, lastPartSize, numberOfParts, null);
-                listener.onResponse(readContext);
+                List<InputStreamContainer> blobPartStreams = new ArrayList<>();
+                for (int partNumber = 0; partNumber < numberOfParts; partNumber++) {
+                    long offset = partNumber * partSize;
+                    InputStreamContainer blobPartStream = new InputStreamContainer(readBlob(blobName, offset, partSize), partSize, offset);
+                    blobPartStreams.add(blobPartStream);
+                }
+                ReadContext blobReadContext = new ReadContext(contentLength, blobPartStreams, null);
+                listener.onResponse(blobReadContext);
             } catch (Exception e) {
                 listener.onFailure(e);
             }
         }).start();
-    }
-
-    private CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException> getTransferPartStreamSupplier(String blobName) {
-        return ((partNo, size, position) -> {
-            InputStream inputStream = readBlob(blobName, position, size);
-            return new InputStreamContainer(inputStream, size, position);
-        });
     }
 
     private boolean isSegmentFile(String filename) {

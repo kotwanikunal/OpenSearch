@@ -115,9 +115,9 @@ public final class AsyncTransferManager {
         int partNumber
     ) {
         GetObjectRequest.Builder getObjectRequestBuilder = GetObjectRequest.builder()
-                .bucket(bucketName)
-                .key(blobName)
-                .partNumber(partNumber);
+            .bucket(bucketName)
+            .key(blobName)
+            .partNumber(partNumber);
 
         return SocketAccess.doPrivileged(
             () -> s3AsyncClient.getObject(getObjectRequestBuilder.build(), AsyncResponseTransformer.toBlockingInputStream())
