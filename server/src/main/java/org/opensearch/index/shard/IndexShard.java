@@ -4882,9 +4882,21 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             if (toDownloadSegments.isEmpty() == false) {
                 try {
-                    final PlainActionFuture<Void> completionListener = PlainActionFuture.newFuture();
-                    downloadSegments(storeDirectory, sourceRemoteDirectory, targetRemoteDirectory, toDownloadSegments, completionListener);
-                    completionListener.actionGet();
+                    // WIP: Single segment download logic
+                    final Path indexPath = store.shardPath() == null ? null : store.shardPath().resolveIndex();
+                    for (String segment: toDownloadSegments){
+                        final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
+                        sourceRemoteDirectory.copyTo(segment, storeDirectory, indexPath, segmentListener);
+                        segmentListener.actionGet();
+                        if (targetRemoteDirectory != null) {
+                            targetRemoteDirectory.copyFrom(storeDirectory, segment, segment, IOContext.DEFAULT);
+                        }
+                    }
+
+                    // Parallel download logic
+//                    final PlainActionFuture<Void> completionListener = PlainActionFuture.newFuture();
+//                    downloadSegments(storeDirectory, sourceRemoteDirectory, targetRemoteDirectory, toDownloadSegments, completionListener);
+//                    completionListener.actionGet();
                 } catch (Exception e) {
                     throw new IOException("Error occurred when downloading segments from remote store", e);
                 }

@@ -13,8 +13,10 @@ import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FilterDirectory;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.Version;
 import org.opensearch.action.support.GroupedActionListener;
+import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.shard.IndexShard;
@@ -121,7 +123,18 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
                         assert directoryFiles.contains(file) == false : "Local store already contains the file " + file;
                         toDownloadSegments.add(fileMetadata);
                     }
-                    downloadSegments(storeDirectory, remoteDirectory, toDownloadSegments, shardPath, listener);
+
+                    final Path indexPath = shardPath == null ? null : shardPath.resolveIndex();
+                    for (StoreFileMetadata segmentFile: toDownloadSegments){
+                        String segment = segmentFile.name();
+                        final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
+                        remoteDirectory.copyTo(segment, storeDirectory, indexPath, segmentListener);
+                        segmentListener.actionGet();
+                    }
+
+                    listener.onResponse(new GetSegmentFilesResponse(toDownloadSegments));
+
+//                    downloadSegments(storeDirectory, remoteDirectory, toDownloadSegments, shardPath, listener);
                     logger.trace("Downloaded segments from remote store {}", toDownloadSegments);
                 } finally {
                     indexShard.store().decRef();
