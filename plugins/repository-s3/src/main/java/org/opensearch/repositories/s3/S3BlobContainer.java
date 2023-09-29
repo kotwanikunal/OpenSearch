@@ -225,6 +225,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
     @ExperimentalApi
     @Override
     public void readBlobAsync(String blobName, ActionListener<ReadContext> listener) {
+        logger.info("reading blobAsync");
         try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {
             final S3AsyncClient s3AsyncClient = amazonS3Reference.get().client();
             final String bucketName = blobStore.bucket();
@@ -233,6 +234,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
             final CompletableFuture<GetObjectAttributesResponse> blobMetadataFuture = getBlobMetadata(s3AsyncClient, bucketName, blobKey);
 
             blobMetadataFuture.whenComplete((blobMetadata, throwable) -> {
+                logger.info("--> step 1 blobMetadataFuture when complete <--");
                 if (throwable != null) {
                     Exception ex = throwable.getCause() instanceof Exception
                         ? (Exception) throwable.getCause()
@@ -241,23 +243,31 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
                     return;
                 }
 
+                logger.info("--> step 2 blobMetadataFuture when complete <--");
                 final List<CompletableFuture<InputStreamContainer>> blobPartInputStreamFutures = new ArrayList<>();
                 final long blobSize = blobMetadata.objectSize();
                 final Integer numberOfParts = blobMetadata.objectParts() == null ? null : blobMetadata.objectParts().totalPartsCount();
                 final String blobChecksum = blobMetadata.checksum().checksumCRC32();
 
+                logger.info("--> step 3 blobMetadataFuture when complete <--");
                 if (numberOfParts == null) {
+                    logger.info("--> step 4 blobMetadataFuture when complete <--");
                     blobPartInputStreamFutures.add(getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, null));
                 } else {
+                    logger.info("--> step 4.5 blobMetadataFuture when complete <--");
                     // S3 multipart files use 1 to n indexing
                     for (int partNumber = 1; partNumber <= numberOfParts; partNumber++) {
                         blobPartInputStreamFutures.add(getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, partNumber));
                     }
                 }
 
+                logger.info("--> step 5 blobMetadataFuture when complete <--");
                 CompletableFuture.allOf(blobPartInputStreamFutures.toArray(CompletableFuture[]::new))
                     .whenComplete((unused, partThrowable) -> {
+
+                        logger.info("--> step 6 blobMetadataFuture blobPartInputStreamFutures when complete <--");
                         if (partThrowable == null) {
+                            logger.info("--> step 7 blobMetadataFuture blobPartInputStreamFutures when complete <--");
                             listener.onResponse(
                                 new ReadContext(
                                     blobSize,
@@ -269,11 +279,14 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
                             Exception ex = partThrowable.getCause() instanceof Exception
                                 ? (Exception) partThrowable.getCause()
                                 : new Exception(partThrowable.getCause());
+                            logger.info("--> step 7.5 blobMetadataFuture blobPartInputStreamFutures when complete, and exception is  <-- "+ex);
                             listener.onFailure(ex);
                         }
                     });
+                logger.info("--> step 8 blobMetadataFuture when complete <--");
             });
         } catch (Exception ex) {
+            logger.info("--> step 9 blobMetadataFuture when complete <--");
             listener.onFailure(SdkException.create("Error occurred while fetching blob parts from the repository", ex));
         }
     }

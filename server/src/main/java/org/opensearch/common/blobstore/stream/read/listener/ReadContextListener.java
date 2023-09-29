@@ -41,10 +41,11 @@ public class ReadContextListener implements ActionListener<ReadContext> {
 
     @Override
     public void onResponse(ReadContext readContext) {
-        logger.trace("Streams received for blob {}", fileName);
+        logger.info("Streams received for blob {}", fileName);
         final int numParts = readContext.getNumberOfParts();
         final AtomicBoolean anyPartStreamFailed = new AtomicBoolean();
         FileCompletionListener fileCompletionListener = new FileCompletionListener(numParts, fileName, completionListener);
+        logger.info("THE threadpool name here is : "+Thread.currentThread().getName()+" no.of active threads before creating file part writers : "+Thread.activeCount() + " and no.of parts are : "+numParts);
 
         for (int partNumber = 0; partNumber < numParts; partNumber++) {
             FilePartWriter filePartWriter = new FilePartWriter(
@@ -54,8 +55,11 @@ public class ReadContextListener implements ActionListener<ReadContext> {
                 anyPartStreamFailed,
                 fileCompletionListener
             );
-            threadPool.executor(ThreadPool.Names.GENERIC).submit(filePartWriter);
+            logger.info("creating a new thread in sample test threadpool");
+            threadPool.executor(ThreadPool.Names.SAMPLETEST).submit(filePartWriter);
         }
+        logger.info("Streams completed for blob {}", fileName);
+        logger.info("no.of active threads after creating file part writers : "+Thread.activeCount());
     }
 
     @Override

@@ -57,27 +57,37 @@ class FilePartWriter implements Runnable {
     @Override
     public void run() {
         // Ensures no writes to the file if any stream fails.
-        if (anyPartStreamFailed.get() == false) {
-            try (FileChannel outputFileChannel = FileChannel.open(fileLocation, StandardOpenOption.WRITE, StandardOpenOption.CREATE)) {
-                try (InputStream inputStream = blobPartStreamContainer.getInputStream()) {
-                    long streamOffset = blobPartStreamContainer.getOffset();
-                    final byte[] buffer = new byte[BUFFER_SIZE];
-                    int bytesRead;
-                    while ((bytesRead = inputStream.read(buffer)) != -1) {
-                        Channels.writeToChannel(buffer, 0, bytesRead, outputFileChannel, streamOffset);
-                        streamOffset += bytesRead;
+        logger.info("THE threadpool is : "+Thread.currentThread().getName()+" no.of active threads : "+Thread.activeCount());
+        synchronized (anyPartStreamFailed){
+            if (anyPartStreamFailed.get() == false) {
+                try (FileChannel outputFileChannel = FileChannel.open(fileLocation, StandardOpenOption.WRITE, StandardOpenOption.CREATE)) {
+                    try (InputStream inputStream = blobPartStreamContainer.getInputStream()) {
+                        long streamOffset = blobPartStreamContainer.getOffset();
+                        final byte[] buffer = new byte[BUFFER_SIZE];
+                        int bytesRead;
+                        while ((bytesRead = inputStream.read(buffer)) != -1) {
+                            Channels.writeToChannel(buffer, 0, bytesRead, outputFileChannel, streamOffset);
+                            streamOffset += bytesRead;
+                        }
                     }
+                    catch (IOException e) {
+                        logger.info("-->Inner exception catched <-- "+e);
+                        processFailure(e);
+                        return;
+                    }
+                } catch (IOException e) {
+                    logger.info("--> process exception from file part writer <-- "+e);
+                    processFailure(e);
+                    return;
                 }
-            } catch (IOException e) {
-                processFailure(e);
-                return;
+                fileCompletionListener.onResponse(partNumber);
             }
-            fileCompletionListener.onResponse(partNumber);
         }
     }
 
     void processFailure(Exception e) {
         try {
+            logger.info("deleting file location on failure");
             Files.deleteIfExists(fileLocation);
         } catch (IOException ex) {
             // Die silently

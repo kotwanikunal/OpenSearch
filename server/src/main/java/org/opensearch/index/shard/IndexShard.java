@@ -4884,6 +4884,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 try {
                     // WIP: Single segment download logic
                     final Path indexPath = store.shardPath() == null ? null : store.shardPath().resolveIndex();
+                    long downloadSegmentsStartTime = System.nanoTime();
+                    logger.info("starting time for download segments : "+downloadSegmentsStartTime);
                     for (String segment: toDownloadSegments){
                         final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
                         sourceRemoteDirectory.copyTo(segment, storeDirectory, indexPath, segmentListener);
@@ -4892,6 +4894,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                             targetRemoteDirectory.copyFrom(storeDirectory, segment, segment, IOContext.DEFAULT);
                         }
                     }
+                    long downloadSegmentsEndTime = System.nanoTime();
+                    long timeTakenToDownloadSegments = downloadSegmentsEndTime - downloadSegmentsStartTime;
+                    logger.info("End time for download segments : "+downloadSegmentsEndTime);
+                    logger.info("time taken to download segments : "+timeTakenToDownloadSegments);
 
                     // Parallel download logic
 //                    final PlainActionFuture<Void> completionListener = PlainActionFuture.newFuture();

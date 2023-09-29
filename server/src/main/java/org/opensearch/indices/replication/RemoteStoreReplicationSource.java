@@ -106,7 +106,11 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
             if (filesToFetch.isEmpty()) {
                 listener.onResponse(new GetSegmentFilesResponse(Collections.emptyList()));
                 return;
+            }long length = 0;
+            for(StoreFileMetadata storeFileMetadata : filesToFetch){
+                length += storeFileMetadata.length();
             }
+            logger.info("length of all files in replication event is : "+length);
             logger.trace("Downloading segments files from remote store {}", filesToFetch);
 
             RemoteSegmentMetadata remoteSegmentMetadata = remoteDirectory.readLatestMetadataFile();
@@ -125,23 +129,34 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
                     }
 
                     final Path indexPath = shardPath == null ? null : shardPath.resolveIndex();
+                    long downloadSegmentsStartTime = System.nanoTime();
+                    logger.info("RSRS - starting time for download segments : "+downloadSegmentsStartTime);
                     for (StoreFileMetadata segmentFile: toDownloadSegments){
                         String segment = segmentFile.name();
+                        logger.info("downloading segment : "+segment+" with size : "+segmentFile.length());
                         final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
                         remoteDirectory.copyTo(segment, storeDirectory, indexPath, segmentListener);
                         segmentListener.actionGet();
+                        logger.info("successfully downloaded segment : "+segment+" with size : "+segmentFile.length());
                     }
+                    long downloadSegmentsEndTime = System.nanoTime();
+                    long timeTakenToDownloadSegments = downloadSegmentsEndTime - downloadSegmentsStartTime;
+                    logger.info("RSRS - End time for download segments : "+downloadSegmentsEndTime);
+                    logger.info("RSRS - time taken to download segments : "+timeTakenToDownloadSegments);
 
                     listener.onResponse(new GetSegmentFilesResponse(toDownloadSegments));
 
 //                    downloadSegments(storeDirectory, remoteDirectory, toDownloadSegments, shardPath, listener);
                     logger.trace("Downloaded segments from remote store {}", toDownloadSegments);
+
                 } finally {
                     indexShard.store().decRef();
                     indexShard.remoteStore().decRef();
                 }
             }
         } catch (Exception e) {
+            logger.info("exception being thrown is : "+e);
+            e.printStackTrace();
             listener.onFailure(e);
         }
     }
