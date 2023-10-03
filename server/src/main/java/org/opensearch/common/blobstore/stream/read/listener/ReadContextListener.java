@@ -15,6 +15,7 @@ import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.io.Channels;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.core.action.ActionListener;
+import org.opensearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,6 +26,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
@@ -38,12 +40,14 @@ public class ReadContextListener implements ActionListener<ReadContext> {
     private final String fileName;
     private final Path fileLocation;
     private final ActionListener<String> completionListener;
+    private final ThreadPool threadPool;
     private static final Logger logger = LogManager.getLogger(ReadContextListener.class);
 
-    public ReadContextListener(String fileName, Path fileLocation, ActionListener<String> completionListener) {
+    public ReadContextListener(String fileName, Path fileLocation, ActionListener<String> completionListener, ThreadPool threadPool) {
         this.fileName = fileName;
         this.fileLocation = fileLocation;
         this.completionListener = completionListener;
+        this.threadPool = threadPool;
     }
 
     @Override
@@ -53,7 +57,8 @@ public class ReadContextListener implements ActionListener<ReadContext> {
         final AtomicBoolean anyPartStreamFailed = new AtomicBoolean(false);
         final FileCompletionListener fileCompletionListener = new FileCompletionListener(numParts, fileName, completionListener);
         final Queue<Supplier<CompletableFuture<InputStreamContainer>>> queue = new ConcurrentLinkedQueue<>(readContext.getPartStreams());
-        final PartStreamProcessor processor = new PartStreamProcessor(queue, anyPartStreamFailed, fileLocation, fileCompletionListener);
+        final PartStreamProcessor processor = new PartStreamProcessor(queue, anyPartStreamFailed, fileLocation, fileCompletionListener, threadPool.executor(
+            ThreadPool.Names.REMOTE_RECOVERY));
         processor.start();
     }
 
@@ -69,19 +74,22 @@ public class ReadContextListener implements ActionListener<ReadContext> {
         private final AtomicBoolean anyPartStreamFailed;
         private final Path fileLocation;
         private final ActionListener<Integer> completionListener;
+        private final Executor executor;
 
         private PartStreamProcessor(Queue<Supplier<CompletableFuture<InputStreamContainer>>> queue, AtomicBoolean anyPartStreamFailed,
             Path fileLocation,
-            ActionListener<Integer> completionListener) {
+            ActionListener<Integer> completionListener,
+            Executor executor) {
             this.queue = queue;
             this.anyPartStreamFailed = anyPartStreamFailed;
             this.fileLocation = fileLocation;
             this.completionListener = completionListener;
+            this.executor = executor;
         }
 
         void start() {
-            // TODO: starting 5 processors concurrently is an arbitrary choice. Need something better here.
-            for (int i = 0; i < 5; i++) {
+            // TODO: starting 50 processors concurrently is an arbitrary choice. Need something better here.
+            for (int i = 0; i < 50; i++) {
                 process(queue.poll());
             }
         }
@@ -90,7 +98,7 @@ public class ReadContextListener implements ActionListener<ReadContext> {
             if (supplier == null) {
                 return;
             }
-            supplier.get().whenComplete((blobPartStreamContainer, throwable) -> {
+            supplier.get().whenCompleteAsync((blobPartStreamContainer, throwable) -> {
                 if (throwable != null) {
                     if (throwable instanceof Exception) {
                         processFailure((Exception) throwable);
@@ -121,7 +129,7 @@ public class ReadContextListener implements ActionListener<ReadContext> {
                     completionListener.onResponse(0);
                     process(queue.poll());
                 }
-            });
+            }, executor);
         }
 
         void processFailure(Exception e) {

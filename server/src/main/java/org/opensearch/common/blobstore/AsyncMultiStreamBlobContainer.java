@@ -44,18 +44,6 @@ public interface AsyncMultiStreamBlobContainer extends BlobContainer {
     @ExperimentalApi
     void readBlobAsync(String blobName, ActionListener<ReadContext> listener);
 
-    /**
-     * Asynchronously downloads the blob to the specified location using an executor from the thread pool.
-     * @param blobName The name of the blob for which needs to be downloaded.
-     * @param fileLocation The path on local disk where the blob needs to be downloaded.
-     * @param completionListener Listener which will be notified when the download is complete.
-     */
-    @ExperimentalApi
-    default void asyncBlobDownload(String blobName, Path fileLocation, ActionListener<String> completionListener) {
-        ReadContextListener readContextListener = new ReadContextListener(blobName, fileLocation, completionListener);
-        readBlobAsync(blobName, readContextListener);
-    }
-
     /*
      * Wether underlying blobContainer can verify integrity of data after transfer. If true and if expected
      * checksum is provided in WriteContext, then the checksum of transferred data is compared with expected checksum

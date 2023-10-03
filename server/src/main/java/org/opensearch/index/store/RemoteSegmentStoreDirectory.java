@@ -25,6 +25,7 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.Version;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.blobstore.AsyncMultiStreamBlobContainer;
+import org.opensearch.common.blobstore.stream.read.listener.ReadContextListener;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
@@ -468,7 +469,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         if (destinationPath != null && remoteDataDirectory.getBlobContainer() instanceof AsyncMultiStreamBlobContainer) {
             final AsyncMultiStreamBlobContainer blobContainer = (AsyncMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer();
             final Path destinationFilePath = destinationPath.resolve(source);
-            blobContainer.asyncBlobDownload(blobName, destinationFilePath, fileCompletionListener);
+            ReadContextListener readContextListener = new ReadContextListener(blobName, destinationFilePath, fileCompletionListener,threadPool);
+            blobContainer.readBlobAsync(blobName, readContextListener);
         } else {
             // Fallback to older mechanism of downloading the file
             try {

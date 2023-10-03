@@ -68,7 +68,7 @@ public class ReadContextListenerTests extends OpenSearchTestCase {
         List<CompletableFuture<InputStreamContainer>> blobPartStreams = initializeBlobPartStreams();
         CountDownLatch countDownLatch = new CountDownLatch(1);
         ActionListener<String> completionListener = new LatchedActionListener<>(new PlainActionFuture<>(), countDownLatch);
-        ReadContextListener readContextListener = new ReadContextListener(TEST_SEGMENT_FILE, fileLocation, completionListener);
+        ReadContextListener readContextListener = new ReadContextListener(TEST_SEGMENT_FILE, fileLocation, completionListener, threadPool);
         ReadContext readContext = new ReadContext((long) PART_SIZE * NUMBER_OF_PARTS, blobPartStreams, null);
         readContextListener.onResponse(readContext);
 
@@ -83,7 +83,7 @@ public class ReadContextListenerTests extends OpenSearchTestCase {
         List<CompletableFuture<InputStreamContainer>> blobPartStreams = initializeBlobPartStreams();
         CountDownLatch countDownLatch = new CountDownLatch(1);
         ActionListener<String> completionListener = new LatchedActionListener<>(new PlainActionFuture<>(), countDownLatch);
-        ReadContextListener readContextListener = new ReadContextListener(TEST_SEGMENT_FILE, fileLocation, completionListener);
+        ReadContextListener readContextListener = new ReadContextListener(TEST_SEGMENT_FILE, fileLocation, completionListener, threadPool);
         InputStream badInputStream = new InputStream() {
 
             @Override
@@ -119,7 +119,7 @@ public class ReadContextListenerTests extends OpenSearchTestCase {
     public void testReadContextListenerException() {
         Path fileLocation = path.resolve(UUID.randomUUID().toString());
         CountingCompletionListener<String> listener = new CountingCompletionListener<String>();
-        ReadContextListener readContextListener = new ReadContextListener(TEST_SEGMENT_FILE, fileLocation, listener);
+        ReadContextListener readContextListener = new ReadContextListener(TEST_SEGMENT_FILE, fileLocation, listener, threadPool);
         IOException exception = new IOException();
         readContextListener.onFailure(exception);
         assertEquals(1, listener.getFailureCount());
