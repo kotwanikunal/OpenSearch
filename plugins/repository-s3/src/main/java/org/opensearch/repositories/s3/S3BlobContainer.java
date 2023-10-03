@@ -103,6 +103,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static org.opensearch.repositories.s3.S3Repository.MAX_FILE_SIZE;
@@ -241,17 +242,19 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
                     return;
                 }
 
-                final List<CompletableFuture<InputStreamContainer>> blobPartInputStreamFutures = new ArrayList<>();
+                final List<ReadContext.StreamPartCreator> blobPartInputStreamFutures = new ArrayList<>();
                 final long blobSize = blobMetadata.objectSize();
                 final Integer numberOfParts = blobMetadata.objectParts() == null ? null : blobMetadata.objectParts().totalPartsCount();
                 final String blobChecksum = blobMetadata.checksum().checksumCRC32();
+                logger.info("Blob {}, num parts={}", blobKey, numberOfParts);
 
                 if (numberOfParts == null) {
-                    blobPartInputStreamFutures.add(getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, null));
+                    blobPartInputStreamFutures.add(() -> getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, null));
                 } else {
                     // S3 multipart files use 1 to n indexing
                     for (int partNumber = 1; partNumber <= numberOfParts; partNumber++) {
-                        blobPartInputStreamFutures.add(getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, partNumber));
+                        final int innerPartNumber = partNumber;
+                        blobPartInputStreamFutures.add(() -> getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, innerPartNumber));
                     }
                 }
                 listener.onResponse(new ReadContext(blobSize, blobPartInputStreamFutures, blobChecksum));

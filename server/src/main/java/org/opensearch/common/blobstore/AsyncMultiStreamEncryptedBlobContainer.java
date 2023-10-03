@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -145,9 +146,9 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
         }
 
         @Override
-        public List<CompletableFuture<InputStreamContainer>> getPartStreams() {
+        public List<StreamPartCreator> getPartStreams() {
             return super.getPartStreams().stream()
-                .map(cf -> cf.thenApply(this::decryptInputStreamContainer))
+                .map(supplier -> (StreamPartCreator) () -> supplier.get().thenApply(this::decryptInputStreamContainer))
                 .collect(Collectors.toUnmodifiableList());
         }
 
