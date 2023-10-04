@@ -129,6 +129,7 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
                 }
             }
         } catch (Exception e) {
+            logger.error("[Kunal] Remote store replication error: ", e);
             listener.onFailure(e);
         }
     }

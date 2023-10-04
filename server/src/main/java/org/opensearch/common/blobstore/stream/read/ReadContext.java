@@ -8,6 +8,8 @@
 
 package org.opensearch.common.blobstore.stream.read;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.io.InputStreamContainer;
 
@@ -19,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
  */
 @ExperimentalApi
 public class ReadContext {
+    private static final Logger logger = LogManager.getLogger(ReadContext.class);
     private final long blobSize;
     private final List<CompletableFuture<InputStreamContainer>> asyncPartStreams;
     private final String blobChecksum;
@@ -48,6 +51,7 @@ public class ReadContext {
     }
 
     public List<CompletableFuture<InputStreamContainer>> getPartStreams() {
+        logger.error("[Kunal] ReadContext part streams: {}", asyncPartStreams);
         return asyncPartStreams;
     }
 }

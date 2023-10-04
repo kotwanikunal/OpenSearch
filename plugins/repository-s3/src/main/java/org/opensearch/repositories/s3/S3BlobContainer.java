@@ -225,37 +225,47 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
     @ExperimentalApi
     @Override
     public void readBlobAsync(String blobName, ActionListener<ReadContext> listener) {
+        logger.error("[Kunal] Received readBlobAsync for {}", blobName);
         try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {
             final S3AsyncClient s3AsyncClient = amazonS3Reference.get().client();
             final String bucketName = blobStore.bucket();
             final String blobKey = buildKey(blobName);
 
             final CompletableFuture<GetObjectAttributesResponse> blobMetadataFuture = getBlobMetadata(s3AsyncClient, bucketName, blobKey);
+            logger.error("[Kunal] Calculated blobMetadataFuture {}", blobMetadataFuture);
 
             blobMetadataFuture.whenComplete((blobMetadata, throwable) -> {
                 if (throwable != null) {
+                    logger.error("[Kunal] throwable blobMetadataFuture: ", throwable);
                     Exception ex = throwable.getCause() instanceof Exception
                         ? (Exception) throwable.getCause()
                         : new Exception(throwable.getCause());
                     listener.onFailure(ex);
                     return;
                 }
+                try {
+                    final long blobSize = blobMetadata.objectSize();
+                    final Integer numberOfParts = blobMetadata.objectParts() == null ? null : blobMetadata.objectParts().totalPartsCount();
+                    final String blobChecksum = blobMetadata.checksum() == null ? null : blobMetadata.checksum().checksumCRC32();
 
-                final List<CompletableFuture<InputStreamContainer>> blobPartInputStreamFutures = new ArrayList<>();
-                final long blobSize = blobMetadata.objectSize();
-                final Integer numberOfParts = blobMetadata.objectParts() == null ? null : blobMetadata.objectParts().totalPartsCount();
-                final String blobChecksum = blobMetadata.checksum().checksumCRC32();
+                    logger.error("[Kunal] Received blobmetadata {}", blobMetadata);
 
-                if (numberOfParts == null) {
-                    blobPartInputStreamFutures.add(getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, null));
-                } else {
-                    // S3 multipart files use 1 to n indexing
-                    for (int partNumber = 1; partNumber <= numberOfParts; partNumber++) {
-                        blobPartInputStreamFutures.add(getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, partNumber));
+                    final List<CompletableFuture<InputStreamContainer>> blobPartInputStreamFutures = new ArrayList<>();
+                    if (numberOfParts == null) {
+                        blobPartInputStreamFutures.add(getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, null));
+                    } else {
+                        // S3 multipart files use 1 to n indexing
+                        for (int partNumber = 1; partNumber <= numberOfParts; partNumber++) {
+                            blobPartInputStreamFutures.add(getBlobPartInputStreamContainer(s3AsyncClient, bucketName, blobKey, partNumber));
+                        }
                     }
+                    logger.error("[Kunal] Received read context {}", blobPartInputStreamFutures);
+                    listener.onResponse(new ReadContext(blobSize, blobPartInputStreamFutures, blobChecksum));
+                } catch (Exception e) {
+                    listener.onFailure(e);
                 }
-                listener.onResponse(new ReadContext(blobSize, blobPartInputStreamFutures, blobChecksum));
             });
+            logger.error("[Kunal] Wrapped blobMetadataFuture {}", blobMetadataFuture);
         } catch (Exception ex) {
             listener.onFailure(SdkException.create("Error occurred while fetching blob parts from the repository", ex));
         }

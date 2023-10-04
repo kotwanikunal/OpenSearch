@@ -54,6 +54,7 @@ class FilePartWriter implements BiConsumer<InputStreamContainer, Throwable> {
 
     @Override
     public void accept(InputStreamContainer blobPartStreamContainer, Throwable throwable) {
+        logger.error("[Kunal] Received FPW stream: {}", blobPartStreamContainer);
         if (throwable != null) {
             if (throwable instanceof Exception) {
                 processFailure((Exception) throwable);
@@ -65,16 +66,20 @@ class FilePartWriter implements BiConsumer<InputStreamContainer, Throwable> {
         // Ensures no writes to the file if any stream fails.
         if (anyPartStreamFailed.get() == false) {
             try (FileChannel outputFileChannel = FileChannel.open(fileLocation, StandardOpenOption.WRITE, StandardOpenOption.CREATE)) {
+                logger.error("[Kunal] FPW Before input stream open: {}, {}", fileLocation.getFileName(), partNumber);
                 try (InputStream inputStream = blobPartStreamContainer.getInputStream()) {
+                    logger.error("[Kunal] FPW After input stream open: {}, {}", fileLocation.getFileName(), partNumber);
                     long streamOffset = blobPartStreamContainer.getOffset();
                     final byte[] buffer = new byte[BUFFER_SIZE];
                     int bytesRead;
                     while ((bytesRead = inputStream.read(buffer)) != -1) {
+                        logger.error("[Kunal] FPW writing input stream open: {}, {}, bytes{}", fileLocation.getFileName(), partNumber, bytesRead);
                         Channels.writeToChannel(buffer, 0, bytesRead, outputFileChannel, streamOffset);
                         streamOffset += bytesRead;
                     }
                 }
             } catch (IOException e) {
+                logger.error("[Kunal] Exception FPW stream: ", e);
                 processFailure(e);
                 return;
             }

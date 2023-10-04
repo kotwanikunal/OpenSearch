@@ -8,6 +8,8 @@
 
 package org.opensearch.common.blobstore;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
@@ -30,6 +32,7 @@ import java.util.stream.Collectors;
  */
 public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobContainer<T, U> implements AsyncMultiStreamBlobContainer {
 
+    private static final Logger logger = LogManager.getLogger(AsyncMultiStreamEncryptedBlobContainer.class);
     private final AsyncMultiStreamBlobContainer blobContainer;
     private final CryptoHandler<T, U> cryptoHandler;
 
@@ -49,13 +52,20 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
     public void readBlobAsync(String blobName, ActionListener<ReadContext> listener) {
         try {
             final U cryptoContext = cryptoHandler.loadEncryptionMetadata(getEncryptedHeaderContentSupplier(blobName));
-            ActionListener<ReadContext> decryptingCompletionListener = ActionListener.map(
-                listener,
-                readContext -> new DecryptedReadContext<>(readContext, cryptoHandler, cryptoContext)
-            );
+            logger.error("[Kunal] Crypto context loaded: {}", cryptoContext);
+            ActionListener<ReadContext> decryptingCompletionListener =
+                    ActionListener.wrap(readContext -> {
+                        ReadContext decryptedReadContext = new DecryptedReadContext<>(readContext, cryptoHandler, cryptoContext);
+                        decryptedReadContext.getPartStreams().forEach(System.out::println);
+                        listener.onResponse(decryptedReadContext);
+                    }, listener::onFailure);
+            logger.error("[Kunal] Decrypting action listener created: {}", decryptingCompletionListener);
 
             blobContainer.readBlobAsync(blobName, decryptingCompletionListener);
+            logger.error("[Kunal] Called read blob async: {}", blobName);
+
         } catch (Exception e) {
+            logger.error("[Kunal] Exception: ", e);
             listener.onFailure(e);
         }
     }
@@ -133,22 +143,29 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
             super(readContext);
             this.cryptoHandler = cryptoHandler;
             this.cryptoContext = cryptoContext;
+            logger.error("[Kunal] Created DecryptedReadContext {}", readContext);
         }
 
         @Override
         public long getBlobSize() {
             // initializes the value lazily
+            logger.error("[Kunal] getBlobSize called");
+
             if (blobSize == null) {
                 this.blobSize = this.cryptoHandler.estimateDecryptedLength(cryptoContext, super.getBlobSize());
+                logger.error("[Kunal] blob size value initialized: {}", blobSize);
             }
             return this.blobSize;
         }
 
         @Override
         public List<CompletableFuture<InputStreamContainer>> getPartStreams() {
-            return super.getPartStreams().stream()
+            logger.error("[Kunal] Super part streams: {}", super.getPartStreams());
+            List<CompletableFuture<InputStreamContainer>> convertedStreams = super.getPartStreams().stream()
                 .map(cf -> cf.thenApply(this::decryptInputStreamContainer))
                 .collect(Collectors.toUnmodifiableList());
+            logger.error("[Kunal] Converted part streams: {}", convertedStreams);
+            return convertedStreams;
         }
 
         /**
@@ -159,16 +176,20 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
         private InputStreamContainer decryptInputStreamContainer(InputStreamContainer inputStreamContainer) {
             long startOfStream = inputStreamContainer.getOffset();
             long endOfStream = startOfStream + inputStreamContainer.getContentLength() - 1;
+            logger.error("[Kunal] decryptInputStreamContainer start: {}, end: {}", startOfStream, endOfStream);
             DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamOfRange(
                 cryptoContext,
                 startOfStream,
                 endOfStream
             );
-
+            logger.error("[Kunal] decryptedStreamProvider {}}", decryptedStreamProvider);
             long adjustedPos = decryptedStreamProvider.getAdjustedRange()[0];
             long adjustedLength = decryptedStreamProvider.getAdjustedRange()[1] - adjustedPos + 1;
+            logger.error("[Kunal] adjusted start: {}, end: {}", adjustedPos, adjustedLength);
+
             final InputStream decryptedStream = decryptedStreamProvider.getDecryptedStreamProvider()
                 .apply(inputStreamContainer.getInputStream());
+            logger.error("[Kunal] decryptedStream: {}", decryptedStream);
             return new InputStreamContainer(decryptedStream, adjustedLength, adjustedPos);
         }
     }
