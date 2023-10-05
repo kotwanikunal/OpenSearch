@@ -13,7 +13,6 @@ import org.opensearch.common.crypto.EncryptedHeaderContentSupplier;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.encryption.MockKeyProvider;
 import org.opensearch.test.OpenSearchTestCase;
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -27,8 +26,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.zip.CRC32;
@@ -47,13 +44,12 @@ public class CryptoTests extends OpenSearchTestCase {
     private static FrameCryptoHandler frameCryptoHandler;
 
     private static FrameCryptoHandler frameCryptoHandlerTrailingAlgo;
-    private static final ExecutorService executorService = Executors.newFixedThreadPool(2);
 
     static class CustomFrameCryptoHandlerTest extends FrameCryptoHandler {
         private final int frameSize;
 
         CustomFrameCryptoHandlerTest(AwsCrypto awsCrypto, HashMap<String, String> config, int frameSize) {
-            super(awsCrypto, config, () -> {}, executorService);
+            super(awsCrypto, config, () -> {});
             this.frameSize = frameSize;
         }
 
@@ -61,11 +57,6 @@ public class CryptoTests extends OpenSearchTestCase {
         public int getFrameSize() {
             return frameSize;
         }
-    }
-
-    @AfterClass
-    public static void close() {
-        executorService.shutdown();
     }
 
     @Before

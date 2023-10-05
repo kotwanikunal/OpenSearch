@@ -17,7 +17,6 @@ import org.opensearch.encryption.TrimmingStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
 
 import com.amazonaws.encryptionsdk.ParsedCiphertext;
 
@@ -25,21 +24,14 @@ public class FrameCryptoHandler implements CryptoHandler<EncryptionMetadata, Par
     private final AwsCrypto awsCrypto;
     private final Map<String, String> encryptionContext;
     private final Runnable onClose;
-    private final ExecutorService decryptionExecutor;
 
     // package private for tests
     private final int FRAME_SIZE = 8 * 1024;
 
-    public FrameCryptoHandler(
-        AwsCrypto awsCrypto,
-        Map<String, String> encryptionContext,
-        Runnable onClose,
-        ExecutorService decryptionExecutor
-    ) {
+    public FrameCryptoHandler(AwsCrypto awsCrypto, Map<String, String> encryptionContext, Runnable onClose) {
         this.awsCrypto = awsCrypto;
         this.encryptionContext = encryptionContext;
         this.onClose = onClose;
-        this.decryptionExecutor = decryptionExecutor;
     }
 
     public int getFrameSize() {
@@ -156,7 +148,7 @@ public class FrameCryptoHandler implements CryptoHandler<EncryptionMetadata, Par
      * @return Decrypting wrapper stream
      */
     public InputStream createDecryptingStream(InputStream encryptedStream) {
-        return awsCrypto.createDecryptingStream(encryptedStream, decryptionExecutor);
+        return awsCrypto.createDecryptingStream(encryptedStream);
     }
 
     /**
@@ -181,7 +173,7 @@ public class FrameCryptoHandler implements CryptoHandler<EncryptionMetadata, Par
         }
         int frameStartNumber = (int) (startPosOfRawContent / parsedCiphertext.getFrameLength()) + 1;
         long encryptedSize = encryptedRange[1] - encryptedRange[0] + 1;
-        return awsCrypto.createDecryptingStream(inputStream, encryptedSize, parsedCiphertext, frameStartNumber, false, decryptionExecutor);
+        return awsCrypto.createDecryptingStream(inputStream, encryptedSize, parsedCiphertext, frameStartNumber, false);
     }
 
     /**

@@ -10,7 +10,6 @@ package org.opensearch.encryption;
 
 import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.MasterKeyProvider;
-import org.opensearch.common.settings.Settings;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.util.Collections;
@@ -22,7 +21,7 @@ import static org.mockito.Mockito.when;
 
 public class CryptoModulePluginTests extends OpenSearchTestCase {
 
-    private final CryptoModulePlugin cryptoModulePlugin = new CryptoModulePlugin(Settings.EMPTY);
+    private final CryptoModulePlugin cryptoModulePlugin = new CryptoModulePlugin();
 
     public void testGetOrCreateCryptoHandler() {
         MasterKeyProvider mockKeyProvider = mock(MasterKeyProvider.class);

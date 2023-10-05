@@ -12,7 +12,6 @@ import org.opensearch.common.io.InputStreamContainer;
 
 import java.io.InputStream;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
 
 import com.amazonaws.encryptionsdk.CommitmentPolicy;
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
@@ -118,10 +117,10 @@ public class AwsCrypto {
         return EncryptionHandler.getAlgoTrailingLength(cryptoAlgorithm);
     }
 
-    public CryptoInputStream<?> createDecryptingStream(final InputStream inputStream, ExecutorService decryptionExecutor) {
+    public CryptoInputStream<?> createDecryptingStream(final InputStream inputStream) {
 
         final MessageCryptoHandler cryptoHandler = DecryptionHandler.create(materialsManager);
-        return new CryptoInputStream<>(inputStream, cryptoHandler, true, decryptionExecutor);
+        return new CryptoInputStream<>(inputStream, cryptoHandler, true);
     }
 
     public CryptoInputStream<?> createDecryptingStream(
@@ -129,12 +128,11 @@ public class AwsCrypto {
         final long size,
         final ParsedCiphertext parsedCiphertext,
         final int frameStartNum,
-        boolean isLastPart,
-        ExecutorService decryptionExecutor
+        boolean isLastPart
     ) {
 
         final MessageCryptoHandler cryptoHandler = DecryptionHandler.create(materialsManager, parsedCiphertext, frameStartNum);
-        CryptoInputStream<?> cryptoInputStream = new CryptoInputStream<>(inputStream, cryptoHandler, isLastPart, decryptionExecutor);
+        CryptoInputStream<?> cryptoInputStream = new CryptoInputStream<>(inputStream, cryptoHandler, isLastPart);
         cryptoInputStream.setMaxInputLength(size);
         return cryptoInputStream;
     }
