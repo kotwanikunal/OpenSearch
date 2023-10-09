@@ -27,6 +27,7 @@ import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -143,9 +144,14 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
     ) {
         final Path indexPath = shardPath == null ? null : shardPath.resolveIndex();
         for (StoreFileMetadata storeFileMetadata : toDownloadSegments) {
-            final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
-            remoteStoreDirectory.copyTo(storeFileMetadata.name(), storeDirectory, indexPath, segmentListener);
-            segmentListener.actionGet();
+            try {
+                final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
+                remoteStoreDirectory.copyTo(storeFileMetadata.name(), storeDirectory, indexPath, segmentListener);
+                segmentListener.actionGet(Duration.ofSeconds(10).toMillis());
+            } catch (Exception e) {
+                completionListener.onFailure(e);
+                return;
+            }
         }
         completionListener.onResponse(new GetSegmentFilesResponse(toDownloadSegments));
     }

@@ -54,7 +54,7 @@ class FilePartWriter implements BiConsumer<InputStreamContainer, Throwable> {
 
     @Override
     public void accept(InputStreamContainer blobPartStreamContainer, Throwable throwable) {
-        logger.error("[Kunal] Received FPW stream: {}", blobPartStreamContainer);
+        logger.error("[Kunal] Received FPW stream: {}, {}", fileLocation.getFileName(), partNumber);
         if (throwable != null) {
             if (throwable instanceof Exception) {
                 processFailure((Exception) throwable);
@@ -78,11 +78,16 @@ class FilePartWriter implements BiConsumer<InputStreamContainer, Throwable> {
                         streamOffset += bytesRead;
                     }
                 }
+                if (Files.exists(fileLocation) == false) {
+                    processFailure(new Exception("Stream could not be transferred"));
+                    return;
+                }
             } catch (IOException e) {
                 logger.error("[Kunal] Exception FPW stream: ", e);
                 processFailure(e);
                 return;
             }
+            logger.error("[Kunal] Exiting FPW stream: {}, {}", fileLocation.getFileName(), partNumber);
             fileCompletionListener.onResponse(partNumber);
         }
     }

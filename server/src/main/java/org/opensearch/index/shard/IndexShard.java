@@ -200,6 +200,8 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.temporal.TemporalUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -4918,9 +4920,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     ) throws IOException {
         final Path indexPath = store.shardPath() == null ? null : store.shardPath().resolveIndex();
         for (String segment : toDownloadSegments) {
-            final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
-            sourceRemoteDirectory.copyTo(segment, storeDirectory, indexPath, segmentListener);
-            segmentListener.actionGet();
+           try {
+               final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
+               sourceRemoteDirectory.copyTo(segment, storeDirectory, indexPath, segmentListener);
+               segmentListener.actionGet(Duration.ofSeconds(10).toMillis());
+           } catch (Exception ex) {
+               throw new IOException(ex);
+           }
             onFileSync.run();
             if (targetRemoteDirectory != null) {
                 targetRemoteDirectory.copyFrom(storeDirectory, segment, segment, IOContext.DEFAULT);

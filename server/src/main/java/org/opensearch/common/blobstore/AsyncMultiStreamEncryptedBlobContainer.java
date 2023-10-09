@@ -13,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.blobstore.stream.read.ReadContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
+import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.DecryptedRangedStreamProvider;
 import org.opensearch.common.io.InputStreamContainer;
@@ -23,6 +24,7 @@ import java.io.InputStream;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * EncryptedBlobContainer is an encrypted BlobContainer that is backed by a
@@ -55,8 +57,7 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
             logger.error("[Kunal] Crypto context loaded: {}", cryptoContext);
             ActionListener<ReadContext> decryptingCompletionListener =
                     ActionListener.wrap(readContext -> {
-                        ReadContext decryptedReadContext = new DecryptedReadContext<>(readContext, cryptoHandler, cryptoContext);
-                        decryptedReadContext.getPartStreams().forEach(System.out::println);
+                        ReadContext decryptedReadContext = new DecryptedReadContext<>(readContext, cryptoHandler, cryptoContext, this, blobName);
                         listener.onResponse(decryptedReadContext);
                     }, listener::onFailure);
             logger.error("[Kunal] Decrypting action listener created: {}", decryptingCompletionListener);
@@ -139,11 +140,16 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
         private final U cryptoContext;
         private Long blobSize;
 
-        public DecryptedReadContext(ReadContext readContext, CryptoHandler<T, U> cryptoHandler, U cryptoContext) {
+        private final EncryptedBlobContainer blobContainer;
+
+        private final String blobName;
+
+        public DecryptedReadContext(ReadContext readContext, CryptoHandler<T, U> cryptoHandler, U cryptoContext, EncryptedBlobContainer blobContainer, String blobName) {
             super(readContext);
             this.cryptoHandler = cryptoHandler;
             this.cryptoContext = cryptoContext;
-            logger.error("[Kunal] Created DecryptedReadContext {}", readContext);
+            this.blobContainer = blobContainer;
+            this.blobName = blobName;
         }
 
         @Override
@@ -161,9 +167,12 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
         @Override
         public List<CompletableFuture<InputStreamContainer>> getPartStreams() {
             logger.error("[Kunal] Super part streams: {}", super.getPartStreams());
-            List<CompletableFuture<InputStreamContainer>> convertedStreams = super.getPartStreams().stream()
-                .map(cf -> cf.thenApply(this::decryptInputStreamContainer))
-                .collect(Collectors.toUnmodifiableList());
+            List<CompletableFuture<InputStreamContainer>> encryptedPartFutures = super.getPartStreams();
+            List<CompletableFuture<InputStreamContainer>> convertedStreams = IntStream.range(0, encryptedPartFutures.size())
+                    .mapToObj(index -> encryptedPartFutures.get(index)
+                            .thenApply(container -> decryptInputStreamContainer(container, index)))
+                    .collect(Collectors.toUnmodifiableList());
+
             logger.error("[Kunal] Converted part streams: {}", convertedStreams);
             return convertedStreams;
         }
@@ -173,24 +182,31 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
          * @param inputStreamContainer encrypted input stream container instance
          * @return decrypted input stream container instance
          */
-        private InputStreamContainer decryptInputStreamContainer(InputStreamContainer inputStreamContainer) {
-            long startOfStream = inputStreamContainer.getOffset();
-            long endOfStream = startOfStream + inputStreamContainer.getContentLength() - 1;
-            logger.error("[Kunal] decryptInputStreamContainer start: {}, end: {}", startOfStream, endOfStream);
-            DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamOfRange(
-                cryptoContext,
-                startOfStream,
-                endOfStream
-            );
-            logger.error("[Kunal] decryptedStreamProvider {}}", decryptedStreamProvider);
-            long adjustedPos = decryptedStreamProvider.getAdjustedRange()[0];
-            long adjustedLength = decryptedStreamProvider.getAdjustedRange()[1] - adjustedPos + 1;
-            logger.error("[Kunal] adjusted start: {}, end: {}", adjustedPos, adjustedLength);
+        private InputStreamContainer decryptInputStreamContainer(InputStreamContainer inputStreamContainer, int index) {
+            final long blobSize = getBlobSize();
+            final int numberOfParts = getNumberOfParts();
+            final long partSize = blobSize / numberOfParts;
 
-            final InputStream decryptedStream = decryptedStreamProvider.getDecryptedStreamProvider()
-                .apply(inputStreamContainer.getInputStream());
-            logger.error("[Kunal] decryptedStream: {}", decryptedStream);
-            return new InputStreamContainer(decryptedStream, adjustedLength, adjustedPos);
+            U encryptionMetadata;
+            try {
+                encryptionMetadata = cryptoHandler.loadEncryptionMetadata(blobContainer.getEncryptedHeaderContentSupplier(blobName));
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+
+            long position = partSize * index;
+            long end = Math.min(partSize * (index + 1), blobSize) - 1;
+            long length = end - position + 1;
+
+            DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamOfRange(
+                encryptionMetadata,
+                position,
+                position + length - 1
+            );
+
+            InputStream encryptedStream = inputStreamContainer.getInputStream();
+            final InputStream decryptedStream = decryptedStreamProvider.getDecryptedStreamProvider().apply(encryptedStream);
+            return new InputStreamContainer(decryptedStream, length, position);
         }
     }
 }
