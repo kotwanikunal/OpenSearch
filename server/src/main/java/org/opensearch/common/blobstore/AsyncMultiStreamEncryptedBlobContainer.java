@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * EncryptedBlobContainer is an encrypted BlobContainer that is backed by a
@@ -48,10 +49,10 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
     public void readBlobAsync(String blobName, ActionListener<ReadContext> listener) {
         try {
             final U cryptoContext = cryptoHandler.loadEncryptionMetadata(getEncryptedHeaderContentSupplier(blobName));
-            ActionListener<ReadContext> decryptingCompletionListener = ActionListener.map(
-                listener,
-                readContext -> new DecryptedReadContext<>(readContext, cryptoHandler, cryptoContext)
-            );
+            ActionListener<ReadContext> decryptingCompletionListener = ActionListener.wrap(readContext -> {
+                ReadContext decryptedReadContext = new DecryptedReadContext<>(readContext, cryptoHandler, cryptoContext, this, blobName);
+                listener.onResponse(decryptedReadContext);
+            }, listener::onFailure);
 
             blobContainer.readBlobAsync(blobName, decryptingCompletionListener);
         } catch (Exception e) {
@@ -126,12 +127,22 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
 
         private final CryptoHandler<T, U> cryptoHandler;
         private final U cryptoContext;
+        private final EncryptedBlobContainer blobContainer;
+        private final String blobName;
         private Long blobSize;
 
-        public DecryptedReadContext(ReadContext readContext, CryptoHandler<T, U> cryptoHandler, U cryptoContext) {
+        public DecryptedReadContext(
+            ReadContext readContext,
+            CryptoHandler<T, U> cryptoHandler,
+            U cryptoContext,
+            EncryptedBlobContainer blobContainer,
+            String blobName
+        ) {
             super(readContext);
             this.cryptoHandler = cryptoHandler;
             this.cryptoContext = cryptoContext;
+            this.blobContainer = blobContainer;
+            this.blobName = blobName;
         }
 
         @Override
@@ -145,8 +156,14 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
 
         @Override
         public List<StreamPartCreator> getPartStreams() {
-            return super.getPartStreams().stream()
-                .map(supplier -> (StreamPartCreator) () -> supplier.get().thenApply(this::decryptInputStreamContainer))
+            List<StreamPartCreator> encryptedPartFutures = super.getPartStreams();
+
+            return IntStream.range(0, encryptedPartFutures.size())
+                .mapToObj(
+                    index -> (StreamPartCreator) () -> encryptedPartFutures.get(index)
+                        .get()
+                        .thenApply(container -> decryptInputStreamContainer(container, index))
+                )
                 .collect(Collectors.toUnmodifiableList());
         }
 
@@ -155,20 +172,31 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
          * @param inputStreamContainer encrypted input stream container instance
          * @return decrypted input stream container instance
          */
-        private InputStreamContainer decryptInputStreamContainer(InputStreamContainer inputStreamContainer) {
-            long startOfStream = inputStreamContainer.getOffset();
-            long endOfStream = startOfStream + inputStreamContainer.getContentLength() - 1;
+        private InputStreamContainer decryptInputStreamContainer(InputStreamContainer inputStreamContainer, int index) {
+            final long blobSize = getBlobSize();
+            final int numberOfParts = getNumberOfParts();
+            final long partSize = blobSize / numberOfParts;
+
+            U encryptionMetadata;
+            try {
+                encryptionMetadata = cryptoHandler.loadEncryptionMetadata(blobContainer.getEncryptedHeaderContentSupplier(blobName));
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+
+            long position = partSize * index;
+            long end = Math.min(partSize * (index + 1), blobSize) - 1;
+            long length = end - position + 1;
+
             DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamOfRange(
-                cryptoContext,
-                startOfStream,
-                endOfStream
+                encryptionMetadata,
+                position,
+                end
             );
 
-            long adjustedPos = decryptedStreamProvider.getAdjustedRange()[0];
-            long adjustedLength = decryptedStreamProvider.getAdjustedRange()[1] - adjustedPos + 1;
             final InputStream decryptedStream = decryptedStreamProvider.getDecryptedStreamProvider()
                 .apply(inputStreamContainer.getInputStream());
-            return new InputStreamContainer(decryptedStream, adjustedLength, adjustedPos);
+            return new InputStreamContainer(decryptedStream, length, position);
         }
     }
 }
