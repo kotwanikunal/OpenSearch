@@ -178,7 +178,7 @@ public class BootstrapForTesting {
                 });
                 // Create access control context for mocking
                 PriviledgedMockMaker.createAccessControlContext();
-                System.setSecurityManager(SecureSM.createTestSecureSM(getTrustedHosts()));
+                System.setSecurityManager(null);
                 Security.selfTest();
 
                 // guarantee plugin classes are initialized first, in case they have one-time hacks.

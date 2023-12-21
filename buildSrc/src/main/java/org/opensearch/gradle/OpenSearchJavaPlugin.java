@@ -172,8 +172,8 @@ public class OpenSearchJavaPlugin implements Plugin<Project> {
                 compileOptions.setEncoding("UTF-8");
                 compileOptions.setIncremental(true);
                 // workaround for https://github.com/gradle/gradle/issues/14141
-                compileTask.getConventionMapping().map("sourceCompatibility", () -> java.getSourceCompatibility().toString());
-                compileTask.getConventionMapping().map("targetCompatibility", () -> java.getTargetCompatibility().toString());
+                compileTask.getConventionMapping().map("sourceCompatibility", () -> "21");
+                compileTask.getConventionMapping().map("targetCompatibility", () -> "21");
                 // The '--release is available from JDK-9 and above
                 if (BuildParams.getRuntimeJavaVersion().compareTo(JavaVersion.VERSION_1_8) > 0) {
                     compileOptions.getRelease().set(releaseVersionProviderFromCompileTask(project, compileTask));

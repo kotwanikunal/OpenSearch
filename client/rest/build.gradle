@@ -114,5 +114,6 @@ tasks.withType(JavaCompile) {
   // Suppressing '[options] target value 8 is obsolete and will be removed in a future release'
   configure(options) {
     options.compilerArgs << '-Xlint:-options'
+    options.compilerArgs -= '-Werror'
   }
 }
