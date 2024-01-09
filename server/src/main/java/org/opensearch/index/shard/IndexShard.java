@@ -89,6 +89,7 @@ import org.opensearch.common.lucene.index.OpenSearchDirectoryReader;
 import org.opensearch.common.metrics.CounterMetric;
 import org.opensearch.common.metrics.MeanMetric;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.concurrent.AbstractRunnable;
@@ -161,7 +162,6 @@ import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.PrimaryReplicaSyncer.ResyncTask;
 import org.opensearch.index.similarity.SimilarityService;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory;
-import org.opensearch.index.store.RemoteStoreFileDownloader;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.store.Store.MetadataSnapshot;
 import org.opensearch.index.store.StoreFileMetadata;
@@ -344,8 +344,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory;
 
     private final List<ReferenceManager.RefreshListener> internalRefreshListener = new ArrayList<>();
-    private final RemoteStoreFileDownloader fileDownloader;
     private final RecoverySettings recoverySettings;
+    private final TransferManager transferManager;
 
     public IndexShard(
         final ShardRouting shardRouting,
@@ -374,7 +374,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
         final Supplier<TimeValue> clusterRemoteTranslogBufferIntervalSupplier,
         final String nodeId,
-        final RecoverySettings recoverySettings
+        final RecoverySettings recoverySettings,
+        final TransferManager transferManager
     ) throws IOException {
         super(shardRouting.shardId(), indexSettings);
         assert shardRouting.initializing();
@@ -438,6 +439,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             this::getSafeCommitInfo,
             pendingReplicationActions
         );
+        this.transferManager = transferManager;
 
         // the query cache is a node-level thing, however we want the most popular filters
         // to be computed on a per-shard basis
@@ -471,7 +473,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             : mapperService.documentMapper().mappers().containsTimeStampField();
         this.remoteStoreStatsTrackerFactory = remoteStoreStatsTrackerFactory;
         this.recoverySettings = recoverySettings;
-        this.fileDownloader = new RemoteStoreFileDownloader(shardRouting.shardId(), threadPool, recoverySettings);
     }
 
     public ThreadPool getThreadPool() {
@@ -573,8 +574,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return recoverySettings;
     }
 
-    public RemoteStoreFileDownloader getFileDownloader() {
-        return fileDownloader;
+    public TransferManager getTransferManager() {
+        return transferManager;
     }
 
     @Override
@@ -5008,7 +5009,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             if (toDownloadSegments.isEmpty() == false) {
                 try {
-                    fileDownloader.download(sourceRemoteDirectory, storeDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
+                    transferManager.downloadSegmentsFromRemoteStore(sourceRemoteDirectory, storeDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
                 } catch (Exception e) {
                     throw new IOException("Error occurred when downloading segments from remote store", e);
                 }

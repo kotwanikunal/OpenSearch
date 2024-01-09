@@ -74,6 +74,7 @@ import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.lucene.store.InputStreamIndexInput;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.AbstractRefCounted;
 import org.opensearch.common.util.concurrent.RefCounted;
@@ -183,6 +184,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     private final ShardLock shardLock;
     private final OnClose onClose;
     private final ShardPath shardPath;
+    private final TransferManager transferManager;
 
     // used to ref count files when a new Reader is opened for PIT/Scroll queries
     // prevents segment files deletion until the PIT/Scroll expires or is discarded
@@ -196,7 +198,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     };
 
     public Store(ShardId shardId, IndexSettings indexSettings, Directory directory, ShardLock shardLock) {
-        this(shardId, indexSettings, directory, shardLock, OnClose.EMPTY, null);
+        this(shardId, indexSettings, directory, shardLock, OnClose.EMPTY, null, null);
     }
 
     public Store(
@@ -205,7 +207,8 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         Directory directory,
         ShardLock shardLock,
         OnClose onClose,
-        ShardPath shardPath
+        ShardPath shardPath,
+        TransferManager transferManager
     ) {
         super(shardId, indexSettings);
         final TimeValue refreshInterval = indexSettings.getValue(INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING);
@@ -215,6 +218,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         this.shardLock = shardLock;
         this.onClose = onClose;
         this.shardPath = shardPath;
+        this.transferManager = transferManager;
         assert onClose != null;
         assert shardLock != null;
         assert shardLock.getShardId().equals(shardId);
@@ -227,6 +231,10 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
     public ShardPath shardPath() {
         return shardPath;
+    }
+
+    public TransferManager getTransferManager() {
+        return transferManager;
     }
 
     /**

@@ -69,6 +69,7 @@ import org.opensearch.common.settings.IndexScopedSettings;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.concurrent.AbstractRefCounted;
@@ -363,7 +364,7 @@ public class IndicesService extends AbstractLifecycleComponent
     private volatile TimeValue clusterDefaultRefreshInterval;
     private volatile TimeValue clusterRemoteTranslogBufferInterval;
     private final FileCacheCleaner fileCacheCleaner;
-
+    private final TransferManager transferManager;
     private final SearchRequestStats searchRequestStats;
 
     @Override
@@ -398,7 +399,8 @@ public class IndicesService extends AbstractLifecycleComponent
         FileCacheCleaner fileCacheCleaner,
         SearchRequestStats searchRequestStats,
         @Nullable RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
-        RecoverySettings recoverySettings
+        RecoverySettings recoverySettings,
+        TransferManager transferManager
     ) {
         this.settings = settings;
         this.threadPool = threadPool;
@@ -413,6 +415,7 @@ public class IndicesService extends AbstractLifecycleComponent
         this.indicesQueryCache = new IndicesQueryCache(settings);
         this.mapperRegistry = mapperRegistry;
         this.namedWriteableRegistry = namedWriteableRegistry;
+        this.transferManager = transferManager;
         indexingMemoryController = new IndexingMemoryController(
             settings,
             threadPool,
@@ -864,7 +867,8 @@ public class IndicesService extends AbstractLifecycleComponent
             directoryFactories,
             () -> allowExpensiveQueries,
             indexNameExpressionResolver,
-            recoveryStateFactories
+            recoveryStateFactories,
+            transferManager
         );
         for (IndexingOperationListener operationListener : indexingOperationListeners) {
             indexModule.addIndexOperationListener(operationListener);
@@ -954,7 +958,8 @@ public class IndicesService extends AbstractLifecycleComponent
             directoryFactories,
             () -> allowExpensiveQueries,
             indexNameExpressionResolver,
-            recoveryStateFactories
+            recoveryStateFactories,
+            transferManager
         );
         pluginsService.onIndexModule(indexModule);
         return indexModule.newIndexMapperService(xContentRegistry, mapperRegistry, scriptService);

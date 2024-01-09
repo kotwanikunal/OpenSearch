@@ -2075,7 +2075,8 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                     fileCacheCleaner,
                     null,
                     new RemoteStoreStatsTrackerFactory(clusterService, settings),
-                    DefaultRecoverySettings.INSTANCE
+                    DefaultRecoverySettings.INSTANCE,
+                    null
                 );
                 final RecoverySettings recoverySettings = new RecoverySettings(settings, clusterSettings);
                 snapshotShardsService = new SnapshotShardsService(

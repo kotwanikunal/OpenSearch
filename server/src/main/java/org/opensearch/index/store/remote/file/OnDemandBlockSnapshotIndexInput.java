@@ -10,9 +10,10 @@ package org.opensearch.index.store.remote.file;
 
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IndexInput;
+import org.opensearch.common.blobstore.BlobContainer;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot.FileInfo;
 import org.opensearch.index.store.remote.utils.BlobFetchRequest;
-import org.opensearch.index.store.remote.utils.TransferManager;
 
 import java.io.IOException;
 
@@ -48,12 +49,14 @@ public class OnDemandBlockSnapshotIndexInput extends OnDemandBlockIndexInput {
      */
     protected final long partSize;
 
+    final BlobContainer blobContainer;
+
     /**
      * Size of the file, larger than length if it's a slice
      */
     protected final long originalFileSize;
 
-    public OnDemandBlockSnapshotIndexInput(FileInfo fileInfo, FSDirectory directory, TransferManager transferManager) {
+    public OnDemandBlockSnapshotIndexInput(FileInfo fileInfo, FSDirectory directory, BlobContainer blobContainer, TransferManager transferManager) {
         this(
             "BlockedSnapshotIndexInput(path=\""
                 + directory.getDirectory().toString()
@@ -70,6 +73,7 @@ public class OnDemandBlockSnapshotIndexInput extends OnDemandBlockIndexInput {
             fileInfo.length(),
             false,
             directory,
+            blobContainer,
             transferManager
         );
     }
@@ -81,12 +85,14 @@ public class OnDemandBlockSnapshotIndexInput extends OnDemandBlockIndexInput {
         long length,
         boolean isClone,
         FSDirectory directory,
+        BlobContainer blobContainer,
         TransferManager transferManager
     ) {
         this(
             OnDemandBlockIndexInput.builder().resourceDescription(resourceDescription).isClone(isClone).offset(offset).length(length),
             fileInfo,
             directory,
+            blobContainer,
             transferManager
         );
     }
@@ -95,6 +101,7 @@ public class OnDemandBlockSnapshotIndexInput extends OnDemandBlockIndexInput {
         OnDemandBlockIndexInput.Builder builder,
         FileInfo fileInfo,
         FSDirectory directory,
+        BlobContainer blobContainer,
         TransferManager transferManager
     ) {
         super(builder);
@@ -112,6 +119,7 @@ public class OnDemandBlockSnapshotIndexInput extends OnDemandBlockIndexInput {
         this.fileName = fileInfo.physicalName();
         this.directory = directory;
         this.originalFileSize = fileInfo.length();
+        this.blobContainer = blobContainer;
     }
 
     @Override
@@ -125,6 +133,7 @@ public class OnDemandBlockSnapshotIndexInput extends OnDemandBlockIndexInput {
                 .resourceDescription(sliceDescription),
             fileInfo,
             directory,
+            blobContainer,
             transferManager
         );
     }
@@ -152,7 +161,8 @@ public class OnDemandBlockSnapshotIndexInput extends OnDemandBlockIndexInput {
             .directory(directory)
             .fileName(blockFileName)
             .build();
-        return transferManager.fetchBlob(blobFetchRequest);
+
+        return transferManager.downloadBlockFromSnapshot(blobContainer, blobFetchRequest);
     }
 
     @Override

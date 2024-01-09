@@ -20,12 +20,12 @@ import org.apache.lucene.store.SimpleFSLockFactory;
 import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.Version;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot;
 import org.opensearch.index.store.StoreFileMetadata;
 import org.opensearch.index.store.remote.utils.BlobFetchRequest;
-import org.opensearch.index.store.remote.utils.TransferManager;
 import org.opensearch.test.OpenSearchTestCase;
 import org.junit.Before;
 
@@ -83,7 +83,7 @@ public class OnDemandBlockSnapshotIndexInputTests extends OpenSearchTestCase {
         final long repositoryChunkSize = new ByteSizeValue(2, ByteSizeUnit.KB).getBytes();
         final long fileSize = new ByteSizeValue(3, ByteSizeUnit.KB).getBytes();
 
-        when(transferManager.fetchBlob(any())).thenReturn(new ByteArrayIndexInput("test", new byte[(int) blockSize]));
+        when(transferManager.downloadBlockFromSnapshot(any(), any())).thenReturn(new ByteArrayIndexInput("test", new byte[(int) blockSize]));
         try (
             FSDirectory directory = new MMapDirectory(path, lockFactory);
             IndexInput indexInput = new OnDemandBlockSnapshotIndexInput(
@@ -99,6 +99,7 @@ public class OnDemandBlockSnapshotIndexInputTests extends OpenSearchTestCase {
                     new ByteSizeValue(repositoryChunkSize)
                 ),
                 directory,
+                null,
                 transferManager
             )
         ) {
@@ -106,7 +107,7 @@ public class OnDemandBlockSnapshotIndexInputTests extends OpenSearchTestCase {
             indexInput.seek(repositoryChunkSize);
         }
         // Verify the second chunk is requested (i.e. ".part1")
-        verify(transferManager).fetchBlob(argThat(request -> request.getBlobName().equals("File_Name.part1")));
+        verify(transferManager).downloadBlockFromSnapshot(any(), argThat(request -> request.getBlobName().equals("File_Name.part1")));
     }
 
     private void runAllTestsFor(int blockSizeShift) throws Exception {
@@ -149,7 +150,7 @@ public class OnDemandBlockSnapshotIndexInputTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             BlobFetchRequest blobFetchRequest = invocation.getArgument(0);
             return blobFetchRequest.getDirectory().openInput(blobFetchRequest.getFileName(), IOContext.READ);
-        }).when(transferManager).fetchBlob(any());
+        }).when(transferManager).downloadBlockFromSnapshot(any(), any());
 
         FSDirectory directory = null;
         try {
@@ -170,6 +171,7 @@ public class OnDemandBlockSnapshotIndexInputTests extends OpenSearchTestCase {
                 .isClone(IS_CLONE),
             fileInfo,
             directory,
+            null,
             transferManager
         );
     }

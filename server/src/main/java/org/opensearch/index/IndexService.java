@@ -52,6 +52,7 @@ import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.concurrent.AbstractAsyncTask;
@@ -182,6 +183,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     private final Supplier<TimeValue> clusterDefaultRefreshIntervalSupplier;
     private final Supplier<TimeValue> clusterRemoteTranslogBufferIntervalSupplier;
     private final RecoverySettings recoverySettings;
+    private final TransferManager transferManager;
 
     public IndexService(
         IndexSettings indexSettings,
@@ -217,7 +219,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         BiFunction<IndexSettings, ShardRouting, TranslogFactory> translogFactorySupplier,
         Supplier<TimeValue> clusterDefaultRefreshIntervalSupplier,
         Supplier<TimeValue> clusterRemoteTranslogBufferIntervalSupplier,
-        RecoverySettings recoverySettings
+        RecoverySettings recoverySettings,
+        TransferManager transferManager
     ) {
         super(indexSettings);
         this.allowExpensiveQueries = allowExpensiveQueries;
@@ -295,6 +298,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         this.translogFactorySupplier = translogFactorySupplier;
         this.clusterRemoteTranslogBufferIntervalSupplier = clusterRemoteTranslogBufferIntervalSupplier;
         this.recoverySettings = recoverySettings;
+        this.transferManager = transferManager;
         updateFsyncTaskIfNecessary();
     }
 
@@ -488,7 +492,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             Store remoteStore = null;
             if (this.indexSettings.isRemoteStoreEnabled()) {
                 Directory remoteDirectory = remoteDirectoryFactory.newDirectory(this.indexSettings, path);
-                remoteStore = new Store(shardId, this.indexSettings, remoteDirectory, lock, Store.OnClose.EMPTY, path);
+                remoteStore = new Store(shardId, this.indexSettings, remoteDirectory, lock, Store.OnClose.EMPTY, path, transferManager);
             }
 
             Directory directory = directoryFactory.newDirectory(this.indexSettings, path);
@@ -498,7 +502,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 directory,
                 lock,
                 new StoreCloseListener(shardId, () -> eventListener.onStoreClosed(shardId)),
-                path
+                path,
+                transferManager
             );
             eventListener.onStoreCreated(shardId);
             indexShard = new IndexShard(
@@ -528,7 +533,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 remoteStoreStatsTrackerFactory,
                 clusterRemoteTranslogBufferIntervalSupplier,
                 nodeEnv.nodeId(),
-                recoverySettings
+                recoverySettings,
+                transferManager
             );
             eventListener.indexShardStateChanged(indexShard, null, indexShard.state(), "shard created");
             eventListener.afterIndexShardCreated(indexShard);

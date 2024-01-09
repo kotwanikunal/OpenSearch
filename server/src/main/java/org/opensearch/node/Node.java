@@ -102,6 +102,7 @@ import org.opensearch.common.settings.SettingUpgrader;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.settings.SettingsException;
 import org.opensearch.common.settings.SettingsModule;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.FeatureFlags;
@@ -728,6 +729,13 @@ public class Node implements Closeable {
                 remoteClusterStateService = null;
             }
 
+
+            final RecoverySettings recoverySettings = new RecoverySettings(settings, settingsModule.getClusterSettings());
+
+            // Wire up across shards. IndicesService -> IndexService -> IndexShard
+            final TransferManager transferManager = new TransferManager(threadPool, recoverySettings, fileCache);
+
+
             // collect engine factory providers from plugins
             final Collection<EnginePlugin> enginePlugins = pluginsService.filterPlugins(EnginePlugin.class);
             final Collection<Function<IndexSettings, Optional<EngineFactory>>> engineFactoryProviders = enginePlugins.stream()
@@ -737,7 +745,8 @@ public class Node implements Closeable {
             final Map<String, IndexStorePlugin.DirectoryFactory> builtInDirectoryFactories = IndexModule.createBuiltInDirectoryFactories(
                 repositoriesServiceReference::get,
                 threadPool,
-                fileCache
+                fileCache,
+                transferManager
             );
 
             final Map<String, IndexStorePlugin.DirectoryFactory> directoryFactories = new HashMap<>();
@@ -776,8 +785,6 @@ public class Node implements Closeable {
             rerouteServiceReference.set(rerouteService);
             clusterService.setRerouteService(rerouteService);
 
-            final RecoverySettings recoverySettings = new RecoverySettings(settings, settingsModule.getClusterSettings());
-
             final IndexStorePlugin.DirectoryFactory remoteDirectoryFactory = new RemoteSegmentStoreDirectoryFactory(
                 repositoriesServiceReference::get,
                 threadPool
@@ -813,7 +820,8 @@ public class Node implements Closeable {
                 fileCacheCleaner,
                 searchRequestStats,
                 remoteStoreStatsTrackerFactory,
-                recoverySettings
+                recoverySettings,
+                transferManager
             );
 
             final IngestService ingestService = new IngestService(

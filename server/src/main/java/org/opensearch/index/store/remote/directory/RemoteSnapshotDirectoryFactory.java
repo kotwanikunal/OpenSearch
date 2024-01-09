@@ -44,16 +44,19 @@ public final class RemoteSnapshotDirectoryFactory implements IndexStorePlugin.Di
     private final Supplier<RepositoriesService> repositoriesService;
     private final ThreadPool threadPool;
 
+    private final org.opensearch.common.transfermanager.TransferManager transferManager;
     private final FileCache remoteStoreFileCache;
 
     public RemoteSnapshotDirectoryFactory(
         Supplier<RepositoriesService> repositoriesService,
         ThreadPool threadPool,
-        FileCache remoteStoreFileCache
+        FileCache remoteStoreFileCache,
+        org.opensearch.common.transfermanager.TransferManager transferManager
     ) {
         this.repositoriesService = repositoriesService;
         this.threadPool = threadPool;
         this.remoteStoreFileCache = remoteStoreFileCache;
+        this.transferManager = transferManager;
     }
 
     @Override
@@ -94,8 +97,8 @@ public final class RemoteSnapshotDirectoryFactory implements IndexStorePlugin.Di
             assert indexShardSnapshot instanceof BlobStoreIndexShardSnapshot
                 : "indexShardSnapshot should be an instance of BlobStoreIndexShardSnapshot";
             final BlobStoreIndexShardSnapshot snapshot = (BlobStoreIndexShardSnapshot) indexShardSnapshot;
-            TransferManager transferManager = new TransferManager(blobContainer, remoteStoreFileCache);
-            return new RemoteSnapshotDirectory(snapshot, localStoreDir, transferManager);
+//            TransferManager transferManager = new TransferManager(blobContainer, remoteStoreFileCache);
+            return new RemoteSnapshotDirectory(snapshot, localStoreDir, blobContainer, transferManager);
         });
     }
 }

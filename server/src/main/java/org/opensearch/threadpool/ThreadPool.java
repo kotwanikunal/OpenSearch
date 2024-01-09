@@ -45,6 +45,7 @@ import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.FeatureFlags;
 import org.opensearch.common.util.concurrent.OpenSearchExecutors;
 import org.opensearch.common.util.concurrent.OpenSearchThreadPoolExecutor;
+import org.opensearch.common.util.concurrent.PrioritizedOpenSearchThreadPoolExecutor;
 import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.common.util.concurrent.XRejectedExecutionHandler;
 import org.opensearch.core.common.io.stream.StreamInput;
@@ -117,6 +118,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         public static final String REMOTE_REFRESH_RETRY = "remote_refresh_retry";
         public static final String REMOTE_RECOVERY = "remote_recovery";
         public static final String INDEX_SEARCHER = "index_searcher";
+        public static final String DOWNLOAD = "download";
     }
 
     /**
@@ -187,6 +189,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         map.put(Names.REMOTE_PURGE, ThreadPoolType.SCALING);
         map.put(Names.REMOTE_REFRESH_RETRY, ThreadPoolType.SCALING);
         map.put(Names.REMOTE_RECOVERY, ThreadPoolType.SCALING);
+        map.put(Names.DOWNLOAD, ThreadPoolType.SCALING);
         if (FeatureFlags.isEnabled(FeatureFlags.CONCURRENT_SEGMENT_SEARCH)) {
             map.put(Names.INDEX_SEARCHER, ThreadPoolType.RESIZABLE);
         }
@@ -310,6 +313,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
             executors.put(entry.getKey(), executorHolder);
         }
 
+        executors.put(Names.DOWNLOAD, new ExecutorHolder(new PrioritizedOpenSearchThreadPoolExecutor(Names.DOWNLOAD, halfProcMaxAt10, halfProcMaxAt10, 5, TimeUnit.MINUTES, null, null, null), new Info(Names.DOWNLOAD, ThreadPoolType.SCALING)));
         executors.put(Names.SAME, new ExecutorHolder(DIRECT_EXECUTOR, new Info(Names.SAME, ThreadPoolType.DIRECT)));
         this.executors = unmodifiableMap(executors);
 

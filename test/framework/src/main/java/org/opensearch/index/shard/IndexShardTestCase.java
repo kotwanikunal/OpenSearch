@@ -278,7 +278,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
     }
 
     protected Store createStore(ShardId shardId, IndexSettings indexSettings, Directory directory, ShardPath shardPath) throws IOException {
-        return new Store(shardId, indexSettings, directory, new DummyShardLock(shardId), Store.OnClose.EMPTY, shardPath);
+        return new Store(shardId, indexSettings, directory, new DummyShardLock(shardId), Store.OnClose.EMPTY, shardPath, null);
     }
 
     protected Releasable acquirePrimaryOperationPermitBlockingly(IndexShard indexShard) throws ExecutionException, InterruptedException {
@@ -703,7 +703,8 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
                 remoteStoreStatsTrackerFactory,
                 () -> IndexSettings.DEFAULT_REMOTE_TRANSLOG_BUFFER_INTERVAL,
                 "dummy-node",
-                DefaultRecoverySettings.INSTANCE
+                DefaultRecoverySettings.INSTANCE,
+                null
             );
             indexShard.addShardFailureCallback(DEFAULT_SHARD_FAILURE_HANDLER);
             if (remoteStoreStatsTrackerFactory != null) {

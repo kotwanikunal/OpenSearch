@@ -35,14 +35,9 @@ package org.opensearch.repositories.blobstore;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.IndexCommit;
-import org.apache.lucene.index.IndexFormatTooNewException;
-import org.apache.lucene.index.IndexFormatTooOldException;
-import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.RateLimiter;
 import org.apache.lucene.util.BytesRef;
 import org.opensearch.ExceptionsHelper;
@@ -86,6 +81,7 @@ import org.opensearch.common.lucene.store.InputStreamIndexInput;
 import org.opensearch.common.metrics.CounterMetric;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.AbstractRunnable;
 import org.opensearch.common.util.concurrent.ConcurrentCollections;
@@ -115,7 +111,6 @@ import org.opensearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshots;
 import org.opensearch.index.snapshots.blobstore.IndexShardSnapshot;
 import org.opensearch.index.snapshots.blobstore.RateLimitingInputStream;
 import org.opensearch.index.snapshots.blobstore.RemoteStoreShardShallowCopySnapshot;
-import org.opensearch.index.snapshots.blobstore.SlicedInputStream;
 import org.opensearch.index.snapshots.blobstore.SnapshotFiles;
 import org.opensearch.index.store.RemoteSegmentStoreDirectoryFactory;
 import org.opensearch.index.store.Store;
@@ -2989,88 +2984,12 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                         // restore the files from the snapshot to the Lucene store
                         for (int i = 0; i < workers; ++i) {
                             try {
-                                executeOneFileRestore(files, allFilesListener);
+                                TransferManager transferManager = store.getTransferManager();
+                                transferManager.downloadSegmentFromSnapshot(store, container, files, allFilesListener);
                             } catch (Exception e) {
                                 allFilesListener.onFailure(e);
                             }
                         }
-                    }
-                }
-
-                private void executeOneFileRestore(
-                    BlockingQueue<BlobStoreIndexShardSnapshot.FileInfo> files,
-                    ActionListener<Void> allFilesListener
-                ) throws InterruptedException {
-                    final BlobStoreIndexShardSnapshot.FileInfo fileToRecover = files.poll(0L, TimeUnit.MILLISECONDS);
-                    if (fileToRecover == null) {
-                        allFilesListener.onResponse(null);
-                    } else {
-                        executor.execute(ActionRunnable.wrap(allFilesListener, filesListener -> {
-                            store.incRef();
-                            try {
-                                restoreFile(fileToRecover, store);
-                            } finally {
-                                store.decRef();
-                            }
-                            executeOneFileRestore(files, filesListener);
-                        }));
-                    }
-                }
-
-                private void restoreFile(BlobStoreIndexShardSnapshot.FileInfo fileInfo, Store store) throws IOException {
-                    ensureNotClosing(store);
-                    logger.trace(() -> new ParameterizedMessage("[{}] restoring [{}] to [{}]", metadata.name(), fileInfo, store));
-                    boolean success = false;
-                    try (
-                        IndexOutput indexOutput = store.createVerifyingOutput(
-                            fileInfo.physicalName(),
-                            fileInfo.metadata(),
-                            IOContext.DEFAULT
-                        )
-                    ) {
-                        if (fileInfo.name().startsWith(VIRTUAL_DATA_BLOB_PREFIX)) {
-                            final BytesRef hash = fileInfo.metadata().hash();
-                            indexOutput.writeBytes(hash.bytes, hash.offset, hash.length);
-                            recoveryState.getIndex().addRecoveredBytesToFile(fileInfo.physicalName(), hash.length);
-                        } else {
-                            try (InputStream stream = maybeRateLimitRestores(new SlicedInputStream(fileInfo.numberOfParts()) {
-                                @Override
-                                protected InputStream openSlice(int slice) throws IOException {
-                                    ensureNotClosing(store);
-                                    return container.readBlob(fileInfo.partName(slice));
-                                }
-                            })) {
-                                final byte[] buffer = new byte[Math.toIntExact(Math.min(bufferSize, fileInfo.length()))];
-                                int length;
-                                while ((length = stream.read(buffer)) > 0) {
-                                    ensureNotClosing(store);
-                                    indexOutput.writeBytes(buffer, 0, length);
-                                    recoveryState.getIndex().addRecoveredBytesToFile(fileInfo.physicalName(), length);
-                                }
-                            }
-                        }
-                        Store.verify(indexOutput);
-                        indexOutput.close();
-                        store.directory().sync(Collections.singleton(fileInfo.physicalName()));
-                        success = true;
-                    } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
-                        try {
-                            store.markStoreCorrupted(ex);
-                        } catch (IOException e) {
-                            logger.warn("store cannot be marked as corrupted", e);
-                        }
-                        throw ex;
-                    } finally {
-                        if (success == false) {
-                            store.deleteQuiet(fileInfo.physicalName());
-                        }
-                    }
-                }
-
-                void ensureNotClosing(final Store store) throws AlreadyClosedException {
-                    assert store.refCount() > 0;
-                    if (store.isClosing()) {
-                        throw new AlreadyClosedException("store is closing");
                     }
                 }
 

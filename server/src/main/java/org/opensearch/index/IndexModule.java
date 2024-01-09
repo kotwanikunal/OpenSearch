@@ -53,6 +53,7 @@ import org.opensearch.common.logging.DeprecationLogger;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.transfermanager.TransferManager;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.io.IOUtils;
@@ -296,6 +297,7 @@ public final class IndexModule {
     private final AtomicBoolean frozen = new AtomicBoolean(false);
     private final BooleanSupplier allowExpensiveQueries;
     private final Map<String, IndexStorePlugin.RecoveryStateFactory> recoveryStateFactories;
+    private final TransferManager transferManager;
 
     /**
      * Construct the index module for the index with the specified index settings. The index module contains extension points for plugins
@@ -314,8 +316,9 @@ public final class IndexModule {
         final Map<String, IndexStorePlugin.DirectoryFactory> directoryFactories,
         final BooleanSupplier allowExpensiveQueries,
         final IndexNameExpressionResolver expressionResolver,
-        final Map<String, IndexStorePlugin.RecoveryStateFactory> recoveryStateFactories
-    ) {
+        final Map<String, IndexStorePlugin.RecoveryStateFactory> recoveryStateFactories,
+        final TransferManager transferManager
+        ) {
         this.indexSettings = indexSettings;
         this.analysisRegistry = analysisRegistry;
         this.engineFactory = Objects.requireNonNull(engineFactory);
@@ -326,6 +329,7 @@ public final class IndexModule {
         this.allowExpensiveQueries = allowExpensiveQueries;
         this.expressionResolver = expressionResolver;
         this.recoveryStateFactories = recoveryStateFactories;
+        this.transferManager = transferManager;
     }
 
     /**
@@ -664,7 +668,8 @@ public final class IndexModule {
                 translogFactorySupplier,
                 clusterDefaultRefreshIntervalSupplier,
                 clusterRemoteTranslogBufferIntervalSupplier,
-                recoverySettings
+                recoverySettings,
+                transferManager
             );
             success = true;
             return indexService;
@@ -769,7 +774,8 @@ public final class IndexModule {
     public static Map<String, IndexStorePlugin.DirectoryFactory> createBuiltInDirectoryFactories(
         Supplier<RepositoriesService> repositoriesService,
         ThreadPool threadPool,
-        FileCache remoteStoreFileCache
+        FileCache remoteStoreFileCache,
+        TransferManager transferManager
     ) {
         final Map<String, IndexStorePlugin.DirectoryFactory> factories = new HashMap<>();
         for (Type type : Type.values()) {
@@ -784,7 +790,7 @@ public final class IndexModule {
                 case REMOTE_SNAPSHOT:
                     factories.put(
                         type.getSettingsKey(),
-                        new RemoteSnapshotDirectoryFactory(repositoriesService, threadPool, remoteStoreFileCache)
+                        new RemoteSnapshotDirectoryFactory(repositoriesService, threadPool, remoteStoreFileCache, transferManager)
                     );
                     break;
                 default:
