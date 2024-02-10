@@ -62,6 +62,7 @@ import org.opensearch.action.ActionRunnable;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.action.admin.indices.upgrade.post.UpgradeRequest;
+import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.action.support.replication.PendingReplicationActions;
 import org.opensearch.action.support.replication.ReplicationResponse;
 import org.opensearch.cluster.metadata.DataStream;
@@ -160,6 +161,7 @@ import org.opensearch.index.seqno.SeqNoStats;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.PrimaryReplicaSyncer.ResyncTask;
 import org.opensearch.index.similarity.SimilarityService;
+import org.opensearch.index.store.DirectoryFileTransferTracker;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 import org.opensearch.index.store.RemoteStoreFileDownloader;
 import org.opensearch.index.store.Store;
@@ -202,6 +204,7 @@ import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -5021,7 +5024,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             if (toDownloadSegments.isEmpty() == false) {
                 try {
-                    fileDownloader.download(sourceRemoteDirectory, storeDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
+                    downloadSegments(storeDirectory, sourceRemoteDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
+                    //fileDownloader.download(sourceRemoteDirectory, storeDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
                 } catch (Exception e) {
                     throw new IOException("Error occurred when downloading segments from remote store", e);
                 }
@@ -5032,6 +5036,25 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
 
         return segmentNFile;
+    }
+    private void downloadSegments(
+        Directory storeDirectory,
+        RemoteSegmentStoreDirectory sourceRemoteDirectory,
+        RemoteSegmentStoreDirectory targetRemoteDirectory,
+        Set<String> toDownloadSegments,
+        final Runnable onFileSync
+    ) throws IOException {
+        final Path indexPath = store.shardPath() == null ? null : store.shardPath().resolveIndex();
+        final DirectoryFileTransferTracker fileTransferTracker = store.getDirectoryFileTransferTracker();
+        for (String segment : toDownloadSegments) {
+            final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
+            sourceRemoteDirectory.copyTo(segment, storeDirectory, indexPath, fileTransferTracker, segmentListener);
+            segmentListener.actionGet();
+            onFileSync.run();
+            if (targetRemoteDirectory != null) {
+                targetRemoteDirectory.copyFrom(storeDirectory, segment, segment, IOContext.DEFAULT);
+            }
+        }
     }
 
     // Visible for testing
