@@ -785,7 +785,8 @@ public class Node implements Closeable {
 
             final IndexStorePlugin.DirectoryFactory remoteDirectoryFactory = new RemoteSegmentStoreDirectoryFactory(
                 repositoriesServiceReference::get,
-                threadPool
+                threadPool,
+                recoverySettings
             );
 
             final SearchRequestStats searchRequestStats = new SearchRequestStats(clusterService.getClusterSettings());

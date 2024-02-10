@@ -34,6 +34,7 @@ import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory.MetadataFilenameUtils;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
+import org.opensearch.indices.recovery.DefaultRecoverySettings;
 import org.opensearch.indices.recovery.RecoverySettings;
 import org.opensearch.indices.replication.checkpoint.SegmentReplicationCheckpointPublisher;
 import org.opensearch.indices.replication.common.ReplicationType;
@@ -167,7 +168,8 @@ public class RemoteStoreRefreshListenerTests extends IndexShardTestCase {
             remoteMetadataDirectory,
             mock(RemoteStoreLockManager.class),
             mock(ThreadPool.class),
-            shardId
+            shardId,
+            DefaultRecoverySettings.INSTANCE
         );
         FilterDirectory remoteStoreFilterDirectory = new RemoteStoreRefreshListenerTests.TestFilterDirectory(
             new RemoteStoreRefreshListenerTests.TestFilterDirectory(remoteSegmentStoreDirectory)
