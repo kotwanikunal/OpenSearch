@@ -47,6 +47,7 @@ public class ReadContextListener implements ActionListener<ReadContext> {
     private final ThreadPool threadPool;
     private final UnaryOperator<InputStream> rateLimiter;
     private final int maxConcurrentStreams;
+    private final boolean useVirtualThreads;
 
     public ReadContextListener(
         String blobName,
@@ -54,7 +55,8 @@ public class ReadContextListener implements ActionListener<ReadContext> {
         ActionListener<String> completionListener,
         ThreadPool threadPool,
         UnaryOperator<InputStream> rateLimiter,
-        int maxConcurrentStreams
+        int maxConcurrentStreams,
+        boolean useVirtualThreads
     ) {
         this.blobName = blobName;
         this.fileLocation = fileLocation;
@@ -64,6 +66,7 @@ public class ReadContextListener implements ActionListener<ReadContext> {
         this.maxConcurrentStreams = maxConcurrentStreams;
         this.tmpFileName = DOWNLOAD_PREFIX + UUIDs.randomBase64UUID() + "." + blobName;
         this.tmpFileLocation = fileLocation.getParent().resolve(tmpFileName);
+        this.useVirtualThreads = useVirtualThreads;
     }
 
     @Override
@@ -78,7 +81,7 @@ public class ReadContextListener implements ActionListener<ReadContext> {
             anyPartStreamFailed,
             tmpFileLocation,
             groupedListener,
-            threadPool.executor(ThreadPool.Names.REMOTE_RECOVERY),
+            useVirtualThreads ? threadPool.virtual() : threadPool.executor(ThreadPool.Names.REMOTE_RECOVERY),
             rateLimiter
         );
         for (int i = 0; i < Math.min(maxConcurrentStreams, queue.size()); i++) {

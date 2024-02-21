@@ -5024,8 +5024,17 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             if (toDownloadSegments.isEmpty() == false) {
                 try {
-                    downloadSegments(storeDirectory, sourceRemoteDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
-                    //fileDownloader.download(sourceRemoteDirectory, storeDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
+                    if (recoverySettings.useStreamBasedDownloads()) {
+                        downloadSegments(storeDirectory, sourceRemoteDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
+                    } else {
+                        fileDownloader.download(
+                            sourceRemoteDirectory,
+                            storeDirectory,
+                            targetRemoteDirectory,
+                            toDownloadSegments,
+                            onFileSync
+                        );
+                    }
                 } catch (Exception e) {
                     throw new IOException("Error occurred when downloading segments from remote store", e);
                 }
@@ -5037,6 +5046,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         return segmentNFile;
     }
+
     private void downloadSegments(
         Directory storeDirectory,
         RemoteSegmentStoreDirectory sourceRemoteDirectory,

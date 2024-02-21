@@ -111,13 +111,13 @@ if (BuildParams.runtimeJavaVersion >= JavaVersion.VERSION_20) {
   }
 
   compileJava20Java {
-    targetCompatibility = JavaVersion.VERSION_20
+    targetCompatibility = JavaVersion.VERSION_21
     options.compilerArgs.addAll(["-processor", "org.openjdk.jmh.generators.BenchmarkProcessor"])
   }
 
   jar {
     metaInf {
-      into 'versions/20'
+      into 'versions/21'
       from sourceSets.java20.output
     }
     manifest.attributes('Multi-Release': 'true')

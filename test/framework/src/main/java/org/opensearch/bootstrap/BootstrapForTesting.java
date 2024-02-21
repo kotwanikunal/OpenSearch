@@ -47,7 +47,6 @@ import org.opensearch.core.common.Strings;
 import org.opensearch.core.util.FileSystemUtils;
 import org.opensearch.mockito.plugin.PriviledgedMockMaker;
 import org.opensearch.plugins.PluginInfo;
-import org.opensearch.secure_sm.SecureSM;
 import org.junit.Assert;
 
 import java.io.InputStream;

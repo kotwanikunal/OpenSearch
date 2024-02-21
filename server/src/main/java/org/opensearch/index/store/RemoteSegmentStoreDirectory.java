@@ -623,7 +623,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
                 completionListener,
                 threadPool,
                 remoteDataDirectory.getDownloadRateLimiter(),
-                recoverySettings.getMaxConcurrentRemoteStoreStreams()
+                recoverySettings.getMaxConcurrentRemoteStoreStreams(),
+                recoverySettings.useVirtualThreads()
             );
             blobContainer.readBlobAsync(blobName, readContextListener);
         } else {
@@ -634,6 +635,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             });
         }
     }
+
     /**
      * Checks if the file exists in the uploadedSegments cache and the checksum matches.
      * It is important to match the checksum as the same segment filename can be used for different

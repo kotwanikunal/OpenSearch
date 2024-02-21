@@ -76,7 +76,8 @@ public class ReadContextListenerTests extends OpenSearchTestCase {
             completionListener,
             threadPool,
             UnaryOperator.identity(),
-            MAX_CONCURRENT_STREAMS
+            MAX_CONCURRENT_STREAMS,
+            false
         );
         ReadContext readContext = new ReadContext((long) PART_SIZE * NUMBER_OF_PARTS, blobPartStreams, null);
         readContextListener.onResponse(readContext);
@@ -98,7 +99,8 @@ public class ReadContextListenerTests extends OpenSearchTestCase {
             completionListener,
             threadPool,
             UnaryOperator.identity(),
-            MAX_CONCURRENT_STREAMS
+            MAX_CONCURRENT_STREAMS,
+            false
         );
         InputStream badInputStream = new InputStream() {
 
@@ -142,7 +144,8 @@ public class ReadContextListenerTests extends OpenSearchTestCase {
             listener,
             threadPool,
             UnaryOperator.identity(),
-            MAX_CONCURRENT_STREAMS
+            MAX_CONCURRENT_STREAMS,
+            false
         );
         IOException exception = new IOException();
         readContextListener.onFailure(exception);
@@ -162,7 +165,8 @@ public class ReadContextListenerTests extends OpenSearchTestCase {
             completionListener,
             threadPool,
             UnaryOperator.identity(),
-            MAX_CONCURRENT_STREAMS
+            MAX_CONCURRENT_STREAMS,
+            false
         );
         ByteArrayInputStream assertingStream = new ByteArrayInputStream(randomByteArrayOfLength(PART_SIZE)) {
             @Override
@@ -201,7 +205,8 @@ public class ReadContextListenerTests extends OpenSearchTestCase {
             completionListener,
             threadPool,
             UnaryOperator.identity(),
-            MAX_CONCURRENT_STREAMS
+            MAX_CONCURRENT_STREAMS,
+            false
         );
         ReadContext readContext = new ReadContext((long) (PART_SIZE + 1) * NUMBER_OF_PARTS, blobPartStreams, null);
         readContextListener.onResponse(readContext);

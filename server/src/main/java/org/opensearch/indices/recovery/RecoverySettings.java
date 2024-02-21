@@ -185,6 +185,27 @@ public class RecoverySettings {
         Property.NodeScope
     );
 
+    public static final Setting<Boolean> INDICES_RECOVERY_USE_MULTISTREAM_DOWNLOADS = Setting.boolSetting(
+        "indices.recovery.use_multistream",
+        false,
+        Property.Dynamic,
+        Property.NodeScope
+    );
+
+    public static final Setting<Boolean> INDICES_RECOVERY_USE_VIRTUAL_THREADS_SETTING = Setting.boolSetting(
+        "indices.recovery.use_virtual_threads",
+        false,
+        Property.Dynamic,
+        Property.NodeScope
+    );
+
+    public static final Setting<Boolean> INDICES_RECOVERY_LIMIT_REMOTE_STREAMS_SETTING = Setting.boolSetting(
+        "indices.recovery.limit_remote_streams",
+        true,
+        Property.Dynamic,
+        Property.NodeScope
+    );
+
     // choose 512KB-16B to ensure that the resulting byte[] is not a humongous allocation in G1.
     public static final ByteSizeValue DEFAULT_CHUNK_SIZE = new ByteSizeValue(512 * 1024 - 16, ByteSizeUnit.BYTES);
 
@@ -200,7 +221,9 @@ public class RecoverySettings {
     private volatile TimeValue internalActionRetryTimeout;
     private volatile TimeValue internalActionLongTimeout;
     private volatile int minRemoteSegmentMetadataFiles;
-
+    private volatile boolean useStreamBasedDownloads;
+    private volatile boolean useVirtualThreads;
+    private volatile boolean limitRemoteStreams;
     private volatile ByteSizeValue chunkSize = DEFAULT_CHUNK_SIZE;
     private volatile TimeValue internalRemoteUploadTimeout;
 
@@ -219,6 +242,11 @@ public class RecoverySettings {
 
         this.activityTimeout = INDICES_RECOVERY_ACTIVITY_TIMEOUT_SETTING.get(settings);
         this.maxBytesPerSec = INDICES_RECOVERY_MAX_BYTES_PER_SEC_SETTING.get(settings);
+
+        this.useStreamBasedDownloads = INDICES_RECOVERY_USE_MULTISTREAM_DOWNLOADS.get(settings);
+        this.useVirtualThreads = INDICES_RECOVERY_USE_VIRTUAL_THREADS_SETTING.get(settings);
+        this.limitRemoteStreams = INDICES_RECOVERY_LIMIT_REMOTE_STREAMS_SETTING.get(settings);
+
         if (maxBytesPerSec.getBytes() <= 0) {
             rateLimiter = null;
         } else {
@@ -249,7 +277,33 @@ public class RecoverySettings {
             this::setMinRemoteSegmentMetadataFiles
         );
         clusterSettings.addSettingsUpdateConsumer(INDICES_INTERNAL_REMOTE_UPLOAD_TIMEOUT, this::setInternalRemoteUploadTimeout);
+        clusterSettings.addSettingsUpdateConsumer(INDICES_RECOVERY_USE_VIRTUAL_THREADS_SETTING, this::setVirtualThreads);
+        clusterSettings.addSettingsUpdateConsumer(INDICES_RECOVERY_LIMIT_REMOTE_STREAMS_SETTING, this::setLimitRemoteStreams);
+        clusterSettings.addSettingsUpdateConsumer(INDICES_RECOVERY_USE_MULTISTREAM_DOWNLOADS, this::setStreamBasedDownloads);
+    }
 
+    public void setStreamBasedDownloads(boolean useStreamBasedDownloads) {
+        this.useStreamBasedDownloads = useStreamBasedDownloads;
+    }
+
+    public void setVirtualThreads(boolean useVirtualThreads) {
+        this.useVirtualThreads = useVirtualThreads;
+    }
+
+    public void setLimitRemoteStreams(boolean limitRemoteStreams) {
+        this.limitRemoteStreams = limitRemoteStreams;
+    }
+
+    public boolean useStreamBasedDownloads() {
+        return useStreamBasedDownloads;
+    }
+
+    public boolean useVirtualThreads() {
+        return useVirtualThreads;
+    }
+
+    public boolean limitRemoteStreams() {
+        return limitRemoteStreams;
     }
 
     public RateLimiter rateLimiter() {

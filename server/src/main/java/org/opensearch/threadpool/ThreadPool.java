@@ -439,7 +439,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         return executor(Names.GENERIC);
     }
 
-    public ExecutorService virtual() { return executor(Names.VIRTUAL); }
+    public ExecutorService virtual() {
+        return executor(Names.VIRTUAL);
+    }
 
     /**
      * Get the {@link ExecutorService} with the given name. This executor service's

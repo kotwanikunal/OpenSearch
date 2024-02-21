@@ -27,7 +27,6 @@ import java.util.Collection;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
 
 /**
  * Helper class to downloads files from a {@link RemoteSegmentStoreDirectory}
