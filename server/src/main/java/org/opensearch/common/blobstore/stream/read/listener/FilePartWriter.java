@@ -24,7 +24,7 @@ import java.util.function.UnaryOperator;
  * instance.
  */
 @InternalApi
-class FilePartWriter {
+public class FilePartWriter {
     // 8 MB buffer for transfer
     private static final int BUFFER_SIZE = 8 * 1024 * 2024;
 

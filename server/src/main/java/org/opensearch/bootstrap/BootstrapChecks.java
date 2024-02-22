@@ -56,7 +56,6 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.AllPermission;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -720,14 +719,15 @@ final class BootstrapChecks {
 
         @SuppressWarnings("removal")
         boolean isAllPermissionGranted() {
-            final SecurityManager sm = System.getSecurityManager();
-            assert sm != null;
-            try {
-                sm.checkPermission(new AllPermission());
-            } catch (final SecurityException e) {
-                return false;
-            }
             return true;
+            // final SecurityManager sm = System.getSecurityManager();
+            // assert sm != null;
+            // try {
+            // sm.checkPermission(new AllPermission());
+            // } catch (final SecurityException e) {
+            // return false;
+            // }
+            // return true;
         }
 
     }

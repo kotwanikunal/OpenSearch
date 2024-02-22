@@ -474,7 +474,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             : mapperService.documentMapper().mappers().containsTimeStampField();
         this.remoteStoreStatsTrackerFactory = remoteStoreStatsTrackerFactory;
         this.recoverySettings = recoverySettings;
-        this.fileDownloader = new RemoteStoreFileDownloader(shardRouting.shardId(), threadPool, recoverySettings);
+        this.fileDownloader = new RemoteStoreFileDownloader(
+            shardRouting.shardId(),
+            threadPool,
+            recoverySettings,
+            shardPath(),
+            getRemoteDirectory()
+        );
     }
 
     public ThreadPool getThreadPool() {
@@ -4998,6 +5004,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final Runnable onFileSync
     ) throws IOException {
         Set<String> toDownloadSegments = new HashSet<>();
+        List<RemoteStoreFileDownloader.FileInfo> toDownloadSegmentsData = new ArrayList<>();
         Set<String> skippedSegments = new HashSet<>();
         String segmentNFile = null;
 
@@ -5012,6 +5019,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 long checksum = Long.parseLong(uploadedSegments.get(file).getChecksum());
                 if (overrideLocal || localDirectoryContains(storeDirectory, file, checksum) == false) {
                     toDownloadSegments.add(file);
+                    toDownloadSegmentsData.add(new RemoteStoreFileDownloader.FileInfo(file, uploadedSegments.get(file).getLength()));
                 } else {
                     skippedSegments.add(file);
                 }
@@ -5027,13 +5035,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     if (recoverySettings.useStreamBasedDownloads()) {
                         downloadSegments(storeDirectory, sourceRemoteDirectory, targetRemoteDirectory, toDownloadSegments, onFileSync);
                     } else {
-                        fileDownloader.download(
-                            sourceRemoteDirectory,
-                            storeDirectory,
-                            targetRemoteDirectory,
-                            toDownloadSegments,
-                            onFileSync
-                        );
+                        fileDownloader.download(toDownloadSegmentsData, onFileSync);
                     }
                 } catch (Exception e) {
                     throw new IOException("Error occurred when downloading segments from remote store", e);

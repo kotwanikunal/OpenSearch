@@ -21,6 +21,7 @@ import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.shard.IndexShardState;
 import org.opensearch.index.store.RemoteSegmentStoreDirectory;
+import org.opensearch.index.store.RemoteStoreFileDownloader;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.store.StoreFileMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
@@ -115,11 +116,11 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
             if (remoteMetadataExists()) {
                 final Directory storeDirectory = indexShard.store().directory();
                 final Collection<String> directoryFiles = List.of(storeDirectory.listAll());
-                final List<String> toDownloadSegmentNames = new ArrayList<>();
+                final List<RemoteStoreFileDownloader.FileInfo> toDownloadSegments = new ArrayList<>();
                 for (StoreFileMetadata fileMetadata : filesToFetch) {
                     String file = fileMetadata.name();
                     assert directoryFiles.contains(file) == false : "Local store already contains the file " + file;
-                    toDownloadSegmentNames.add(file);
+                    toDownloadSegments.add(new RemoteStoreFileDownloader.FileInfo(file, fileMetadata.length()));
                 }
 
                 if (indexShard.getRecoverySettings().useStreamBasedDownloads()) {
@@ -144,9 +145,7 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
                     indexShard.getFileDownloader()
                         .downloadAsync(
                             cancellableThreads,
-                            remoteDirectory,
-                            new ReplicationStatsDirectoryWrapper(storeDirectory, fileProgressTracker),
-                            toDownloadSegmentNames,
+                            toDownloadSegments,
                             ActionListener.map(listener, r -> new GetSegmentFilesResponse(filesToFetch))
                         );
                 }

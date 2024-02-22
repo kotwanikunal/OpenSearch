@@ -10,23 +10,32 @@ package org.opensearch.index.store;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IOContext;
 import org.opensearch.action.support.GroupedActionListener;
 import org.opensearch.action.support.PlainActionFuture;
-import org.opensearch.common.Nullable;
 import org.opensearch.common.annotation.PublicApi;
+import org.opensearch.common.blobstore.BlobContainer;
+import org.opensearch.common.blobstore.stream.read.listener.FilePartWriter;
+import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.util.CancellableThreads;
+import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.index.shard.ShardPath;
 import org.opensearch.indices.recovery.RecoverySettings;
 import org.opensearch.threadpool.ThreadPool;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.function.UnaryOperator;
 
 /**
  * Helper class to downloads files from a {@link RemoteSegmentStoreDirectory}
@@ -40,11 +49,29 @@ public final class RemoteStoreFileDownloader {
     private final Logger logger;
     private final ThreadPool threadPool;
     private final RecoverySettings recoverySettings;
+    private final ShardPath shardPath;
+    private final RemoteSegmentStoreDirectory directory;
+    private final BlobContainer blobContainer;
+
+    private static final long PART_SIZE = 16 * 1024 * 1024;
 
     public RemoteStoreFileDownloader(ShardId shardId, ThreadPool threadPool, RecoverySettings recoverySettings) {
+        this(shardId, threadPool, recoverySettings, null, null);
+    }
+
+    public RemoteStoreFileDownloader(
+        ShardId shardId,
+        ThreadPool threadPool,
+        RecoverySettings recoverySettings,
+        ShardPath shardPath,
+        RemoteSegmentStoreDirectory directory
+    ) {
         this.logger = Loggers.getLogger(RemoteStoreFileDownloader.class, shardId);
         this.threadPool = threadPool;
         this.recoverySettings = recoverySettings;
+        this.shardPath = shardPath;
+        this.directory = directory;
+        this.blobContainer = directory.getSegmentBlobContainer();
     }
 
     /**
@@ -61,9 +88,7 @@ public final class RemoteStoreFileDownloader {
         Directory destination,
         Collection<String> toDownloadSegments,
         ActionListener<Void> listener
-    ) {
-        downloadInternal(cancellableThreads, source, destination, null, toDownloadSegments, () -> {}, listener);
-    }
+    ) {}
 
     /**
      * Copies the given segments from the remote segment store to the given
@@ -83,10 +108,17 @@ public final class RemoteStoreFileDownloader {
         Directory secondDestination,
         Collection<String> toDownloadSegments,
         Runnable onFileCompletion
-    ) throws InterruptedException, IOException {
+    ) throws InterruptedException, IOException {}
+
+    // Virtual Thread Implementation
+    public void downloadAsync(CancellableThreads cancellableThreads, List<FileInfo> toDownloadSegments, ActionListener<Void> listener) {
+        downloadFilesInternal(cancellableThreads, toDownloadSegments, () -> {}, listener);
+    }
+
+    public void download(List<FileInfo> toDownloadSegments, Runnable onFileCompletion) throws InterruptedException, IOException {
         final CancellableThreads cancellableThreads = new CancellableThreads();
         final PlainActionFuture<Void> listener = PlainActionFuture.newFuture();
-        downloadInternal(cancellableThreads, source, destination, secondDestination, toDownloadSegments, onFileCompletion, listener);
+        downloadFilesInternal(cancellableThreads, toDownloadSegments, onFileCompletion, listener);
         try {
             listener.get();
         } catch (ExecutionException e) {
@@ -105,54 +137,80 @@ public final class RemoteStoreFileDownloader {
         }
     }
 
-    private void downloadInternal(
+    private void downloadFilesInternal(
         CancellableThreads cancellableThreads,
-        Directory source,
-        Directory destination,
-        @Nullable Directory secondDestination,
-        Collection<String> toDownloadSegments,
+        List<FileInfo> toDownloadSegments,
         Runnable onFileCompletion,
         ActionListener<Void> listener
     ) {
-        final Queue<String> queue = new ConcurrentLinkedQueue<>(toDownloadSegments);
+        for (FileInfo fileInfo : toDownloadSegments) {
+            fileInfo.setFilePath(shardPath.resolveIndex().resolve(fileInfo.fileName));
+            ActionListener<Void> fileListener = ActionListener.wrap(response -> {
+                IOUtils.fsync(fileInfo.getFilePath(), false);
+                onFileCompletion.run();
+                listener.onResponse(response);
+            }, listener::onFailure);
+            List<PartInfo> toDownloadSegmentParts = createParts(fileInfo);
+            downloadFileInternal(cancellableThreads, toDownloadSegmentParts, fileListener);
+            // TODO: Possibly block per file?
+        }
+    }
+
+    private List<PartInfo> createParts(FileInfo toDownloadSegment) {
+        List<PartInfo> fileParts = new ArrayList<>();
+        for (int i = 0; i < toDownloadSegment.length / PART_SIZE; i++) {
+            long offset = PART_SIZE * i;
+            long partSize = Math.min(toDownloadSegment.length, PART_SIZE * (i + 1)) - offset;
+            fileParts.add(new PartInfo(toDownloadSegment.fileName, partSize, offset, toDownloadSegment.getFilePath()));
+        }
+        return fileParts;
+    }
+
+    private void downloadFileInternal(
+        CancellableThreads cancellableThreads,
+        List<PartInfo> toDownloadSegmentParts,
+        ActionListener<Void> listener
+    ) {
+        final Queue<PartInfo> queue = new ConcurrentLinkedQueue<>(toDownloadSegmentParts);
         // Choose the minimum of:
         // - number of files to download
         // - max thread pool size
         // - "indices.recovery.max_concurrent_remote_store_streams" setting
-        final int threads = Math.min(
-            toDownloadSegments.size(),
-            Math.min(threadPool.info(ThreadPool.Names.REMOTE_RECOVERY).getMax(), recoverySettings.getMaxConcurrentRemoteStoreStreams())
-        );
+        final int threads = recoverySettings.limitRemoteStreams()
+            ? Math.min(
+                toDownloadSegmentParts.size(),
+                Math.min(threadPool.info(ThreadPool.Names.REMOTE_RECOVERY).getMax(), recoverySettings.getMaxConcurrentRemoteStoreStreams())
+            )
+            : toDownloadSegmentParts.size();
+
         logger.trace("Starting download of {} files with {} threads", queue.size(), threads);
-        final ActionListener<Void> allFilesListener = new GroupedActionListener<>(ActionListener.map(listener, r -> null), threads);
+        final ActionListener<Void> allPartsListener = new GroupedActionListener<>(ActionListener.map(listener, r -> null), threads);
         for (int i = 0; i < threads; i++) {
-            copyOneFile(cancellableThreads, source, destination, secondDestination, queue, onFileCompletion, allFilesListener);
+            copyOnePart(cancellableThreads, queue, allPartsListener);
         }
     }
 
-    private void copyOneFile(
-        CancellableThreads cancellableThreads,
-        Directory source,
-        Directory destination,
-        @Nullable Directory secondDestination,
-        Queue<String> queue,
-        Runnable onFileCompletion,
-        ActionListener<Void> listener
-    ) {
-        final String file = queue.poll();
-        if (file == null) {
+    private void copyOnePart(CancellableThreads cancellableThreads, Queue<PartInfo> queue, ActionListener<Void> listener) {
+        final PartInfo part = queue.poll();
+        if (part == null) {
             // Queue is empty, so notify listener we are done
             listener.onResponse(null);
         } else {
-            threadPool.virtual().submit(() -> {
-                logger.info("Downloading file {} {}", file, Thread.currentThread());
+            ExecutorService executor = recoverySettings.useVirtualThreads()
+                ? threadPool.virtual()
+                : threadPool.executor(ThreadPool.Names.REMOTE_RECOVERY);
+            executor.submit(() -> {
+                String blobName = directory.getExistingRemoteFilename(part.getFileName());
+                logger.info("Downloading file {} corresponding to {} {}", part.getFileName(), blobName, Thread.currentThread());
                 try {
                     cancellableThreads.executeIO(() -> {
-                        destination.copyFrom(source, file, file, IOContext.DEFAULT);
-                        onFileCompletion.run();
-                        if (secondDestination != null) {
-                            secondDestination.copyFrom(destination, file, file, IOContext.DEFAULT);
-                        }
+                        InputStream inputStream = blobContainer.readBlob(blobName, part.getOffset(), PART_SIZE);
+                        InputStreamContainer inputStreamContainer = new InputStreamContainer(
+                            inputStream,
+                            inputStream.available(),
+                            part.getOffset()
+                        );
+                        FilePartWriter.write(part.getFilePath(), inputStreamContainer, UnaryOperator.identity());
                     });
                 } catch (Exception e) {
                     // Clear the queue to stop any future processing, report the failure, then return
@@ -160,8 +218,89 @@ public final class RemoteStoreFileDownloader {
                     listener.onFailure(e);
                     return;
                 }
-                copyOneFile(cancellableThreads, source, destination, secondDestination, queue, onFileCompletion, listener);
+                copyOnePart(cancellableThreads, queue, listener);
             });
+        }
+    }
+
+    public static class FileInfo {
+        private String fileName;
+        private long length;
+        private Path filePath;
+
+        public FileInfo(String fileName, long length) {
+            this.fileName = fileName;
+            this.length = length;
+        }
+
+        public String getFileName() {
+            return fileName;
+        }
+
+        public long getLength() {
+            return length;
+        }
+
+        public void setFileName(String fileName) {
+            this.fileName = fileName;
+        }
+
+        public void setLength(long length) {
+            this.length = length;
+        }
+
+        public Path getFilePath() {
+            return filePath;
+        }
+
+        public void setFilePath(Path filePath) {
+            this.filePath = filePath;
+        }
+    }
+
+    public static class PartInfo {
+        private String fileName;
+        private long partSize;
+        private long offset;
+        private Path filePath;
+
+        public PartInfo(String fileName, long partSize, long offset, Path filePath) {
+            this.fileName = fileName;
+            this.partSize = partSize;
+            this.offset = offset;
+            this.filePath = filePath;
+        }
+
+        public long getPartSize() {
+            return partSize;
+        }
+
+        public void setPartSize(long partSize) {
+            this.partSize = partSize;
+        }
+
+        public String getFileName() {
+            return fileName;
+        }
+
+        public void setFileName(String fileName) {
+            this.fileName = fileName;
+        }
+
+        public long getOffset() {
+            return offset;
+        }
+
+        public void setOffset(long offset) {
+            this.offset = offset;
+        }
+
+        public Path getFilePath() {
+            return filePath;
+        }
+
+        public void setFilePath(Path filePath) {
+            this.filePath = filePath;
         }
     }
 }
