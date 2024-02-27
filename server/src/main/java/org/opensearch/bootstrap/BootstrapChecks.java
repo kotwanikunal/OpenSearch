@@ -56,6 +56,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.AllPermission;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -711,23 +712,23 @@ final class BootstrapChecks {
 
         @Override
         public final BootstrapCheckResult check(BootstrapContext context) {
-            // if (isAllPermissionGranted()) {
-            // return BootstrapCheck.BootstrapCheckResult.failure("granting the all permission effectively disables security");
-            // }
+            if (isAllPermissionGranted()) {
+                return BootstrapCheck.BootstrapCheckResult.failure("granting the all permission effectively disables security");
+            }
             return BootstrapCheckResult.success();
         }
 
         @SuppressWarnings("removal")
         boolean isAllPermissionGranted() {
-            return true;
-            // final SecurityManager sm = System.getSecurityManager();
-            // assert sm != null;
-            // try {
-            // sm.checkPermission(new AllPermission());
-            // } catch (final SecurityException e) {
-            // return false;
-            // }
             // return true;
+            final SecurityManager sm = System.getSecurityManager();
+            assert sm != null;
+            try {
+                sm.checkPermission(new AllPermission());
+            } catch (final SecurityException e) {
+                return false;
+            }
+            return true;
         }
 
     }

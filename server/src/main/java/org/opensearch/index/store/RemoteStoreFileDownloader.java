@@ -30,6 +30,8 @@ import org.opensearch.threadpool.ThreadPool;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -293,6 +295,7 @@ public final class RemoteStoreFileDownloader {
         }
     }
 
+    @SuppressWarnings("any")
     private void copyOnePart(
         CancellableThreads cancellableThreads,
         Queue<PartInfo> queue,
@@ -307,28 +310,33 @@ public final class RemoteStoreFileDownloader {
             ExecutorService executor = recoverySettings.useVirtualThreads()
                 ? threadPool.virtual()
                 : threadPool.executor(ThreadPool.Names.REMOTE_RECOVERY);
-            executor.submit(() -> {
-                String blobName = directory.getExistingRemoteFilename(part.getFileName());
-                logger.error("Downloading file {} corresponding to {} {}", part.getFileName(), blobName, Thread.currentThread());
-                try {
-                    cancellableThreads.executeIO(() -> {
-                        InputStream inputStream = blobContainer.readBlob(blobName, part.getOffset(), PART_SIZE);
-                        InputStreamContainer inputStreamContainer = new InputStreamContainer(
-                            inputStream,
-                            inputStream.available(),
-                            part.getOffset()
-                        );
-                        FilePartWriter.write(part.getFilePath(), inputStreamContainer, UnaryOperator.identity());
-                        fileProgressTracker.accept(part.getFileName(), part.getPartSize());
-                    });
-                } catch (Exception e) {
-                    // Clear the queue to stop any future processing, report the failure, then return
-                    queue.clear();
-                    listener.onFailure(e);
-                    return;
+
+            executor.submit(() -> AccessController.doPrivileged(new PrivilegedAction<Void>() {
+                @Override
+                public Void run() {
+                    String blobName = directory.getExistingRemoteFilename(part.getFileName());
+                    logger.error("Downloading file {} corresponding to {} {}", part.getFileName(), blobName, Thread.currentThread());
+                    try {
+                        cancellableThreads.executeIO(() -> {
+                            InputStream inputStream = blobContainer.readBlob(blobName, part.getOffset(), PART_SIZE);
+                            InputStreamContainer inputStreamContainer = new InputStreamContainer(
+                                inputStream,
+                                inputStream.available(),
+                                part.getOffset()
+                            );
+                            FilePartWriter.write(part.getFilePath(), inputStreamContainer, UnaryOperator.identity());
+                            fileProgressTracker.accept(part.getFileName(), part.getPartSize());
+                        });
+                    } catch (Exception e) {
+                        // Clear the queue to stop any future processing, report the failure, then return
+                        queue.clear();
+                        listener.onFailure(e);
+                        return null;
+                    }
+                    copyOnePart(cancellableThreads, queue, fileProgressTracker, listener);
+                    return null;
                 }
-                copyOnePart(cancellableThreads, queue, fileProgressTracker, listener);
-            });
+            }));
         }
     }
 

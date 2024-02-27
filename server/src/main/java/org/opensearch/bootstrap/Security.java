@@ -40,6 +40,7 @@ import org.opensearch.env.Environment;
 import org.opensearch.http.HttpTransportSettings;
 import org.opensearch.plugins.PluginInfo;
 import org.opensearch.plugins.PluginsService;
+import org.opensearch.secure_sm.SecureSM;
 import org.opensearch.transport.TcpTransport;
 
 import java.io.IOException;
@@ -148,7 +149,7 @@ final class Security {
             // SecureSM matches class names as regular expressions so we escape the $ that arises from the nested class name
             OpenSearchUncaughtExceptionHandler.PrivilegedHaltAction.class.getName().replace("$", "\\$"),
             Command.class.getName() };
-        // System.setSecurityManager(new SecureSM(classesThatCanExit));
+        System.setSecurityManager(new SecureSM(classesThatCanExit));
 
         // do some basic tests
         selfTest();
