@@ -42,6 +42,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.opensearch.index.store.RemoteStoreFileDownloader.PART_SIZE;
+
 public class RemoteStoreFileDownloaderTests extends OpenSearchTestCase {
 
     private ThreadPool threadPool;
@@ -187,6 +189,20 @@ public class RemoteStoreFileDownloaderTests extends OpenSearchTestCase {
         thread.interrupt();
         thread.join();
         assertEquals(InterruptedException.class, capturedException.get().getClass());
+    }
+
+    public void testPartsCreator() {
+        RemoteStoreFileDownloader.FileInfo fileInfo = new RemoteStoreFileDownloader.FileInfo("test", PART_SIZE * 2);
+        List<RemoteStoreFileDownloader.PartInfo> parts = fileDownloader.createParts(fileInfo);
+        assertEquals(2, parts.size());
+
+        fileInfo = new RemoteStoreFileDownloader.FileInfo("test", 100);
+        parts = fileDownloader.createParts(fileInfo);
+        assertEquals(1, parts.size());
+
+        fileInfo = new RemoteStoreFileDownloader.FileInfo("test", (PART_SIZE * 100) + 1);
+        parts = fileDownloader.createParts(fileInfo);
+        assertEquals(101, parts.size());
     }
 
     public void testIOException() throws IOException, InterruptedException {

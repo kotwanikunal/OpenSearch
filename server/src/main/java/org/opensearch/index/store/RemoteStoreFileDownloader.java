@@ -10,8 +10,10 @@ package org.opensearch.index.store;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
 import org.opensearch.action.support.GroupedActionListener;
 import org.opensearch.action.support.PlainActionFuture;
+import org.opensearch.common.Nullable;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.stream.read.listener.FilePartWriter;
@@ -35,6 +37,8 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 import java.util.function.UnaryOperator;
 
 /**
@@ -53,7 +57,7 @@ public final class RemoteStoreFileDownloader {
     private final RemoteSegmentStoreDirectory directory;
     private final BlobContainer blobContainer;
 
-    private static final long PART_SIZE = 16 * 1024 * 1024;
+    static final long PART_SIZE = 16 * 1024 * 1024;
 
     public RemoteStoreFileDownloader(ShardId shardId, ThreadPool threadPool, RecoverySettings recoverySettings) {
         this(shardId, threadPool, recoverySettings, null, null);
@@ -71,7 +75,7 @@ public final class RemoteStoreFileDownloader {
         this.recoverySettings = recoverySettings;
         this.shardPath = shardPath;
         this.directory = directory;
-        this.blobContainer = directory.getSegmentBlobContainer();
+        this.blobContainer = directory == null ? null : directory.getSegmentBlobContainer();
     }
 
     /**
@@ -88,7 +92,9 @@ public final class RemoteStoreFileDownloader {
         Directory destination,
         Collection<String> toDownloadSegments,
         ActionListener<Void> listener
-    ) {}
+    ) {
+        downloadInternal(cancellableThreads, source, destination, null, toDownloadSegments, () -> {}, listener);
+    }
 
     /**
      * Copies the given segments from the remote segment store to the given
@@ -108,17 +114,104 @@ public final class RemoteStoreFileDownloader {
         Directory secondDestination,
         Collection<String> toDownloadSegments,
         Runnable onFileCompletion
-    ) throws InterruptedException, IOException {}
-
-    // Virtual Thread Implementation
-    public void downloadAsync(CancellableThreads cancellableThreads, List<FileInfo> toDownloadSegments, ActionListener<Void> listener) {
-        downloadFilesInternal(cancellableThreads, toDownloadSegments, () -> {}, listener);
-    }
-
-    public void download(List<FileInfo> toDownloadSegments, Runnable onFileCompletion) throws InterruptedException, IOException {
+    ) throws InterruptedException, IOException {
         final CancellableThreads cancellableThreads = new CancellableThreads();
         final PlainActionFuture<Void> listener = PlainActionFuture.newFuture();
-        downloadFilesInternal(cancellableThreads, toDownloadSegments, onFileCompletion, listener);
+        downloadInternal(cancellableThreads, source, destination, secondDestination, toDownloadSegments, onFileCompletion, listener);
+        try {
+            listener.get();
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof RuntimeException) {
+                throw (RuntimeException) e.getCause();
+            } else if (e.getCause() instanceof IOException) {
+                throw (IOException) e.getCause();
+            }
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            // If the blocking call on the PlainActionFuture itself is interrupted, then we must
+            // cancel the asynchronous work we were waiting on
+            cancellableThreads.cancel(e.getMessage());
+            Thread.currentThread().interrupt();
+            throw e;
+        }
+    }
+
+    private void downloadInternal(
+        CancellableThreads cancellableThreads,
+        Directory source,
+        Directory destination,
+        @Nullable Directory secondDestination,
+        Collection<String> toDownloadSegments,
+        Runnable onFileCompletion,
+        ActionListener<Void> listener
+    ) {
+        logger.error("Performing FILE based download: {}", toDownloadSegments);
+        final Queue<String> queue = new ConcurrentLinkedQueue<>(toDownloadSegments);
+        // Choose the minimum of:
+        // - number of files to download
+        // - max thread pool size
+        // - "indices.recovery.max_concurrent_remote_store_streams" setting
+        final int threads = Math.min(
+            toDownloadSegments.size(),
+            Math.min(threadPool.info(ThreadPool.Names.REMOTE_RECOVERY).getMax(), recoverySettings.getMaxConcurrentRemoteStoreStreams())
+        );
+        logger.trace("Starting download of {} files with {} threads", queue.size(), threads);
+        final ActionListener<Void> allFilesListener = new GroupedActionListener<>(ActionListener.map(listener, r -> null), threads);
+        for (int i = 0; i < threads; i++) {
+            copyOneFile(cancellableThreads, source, destination, secondDestination, queue, onFileCompletion, allFilesListener);
+        }
+    }
+
+    private void copyOneFile(
+        CancellableThreads cancellableThreads,
+        Directory source,
+        Directory destination,
+        @Nullable Directory secondDestination,
+        Queue<String> queue,
+        Runnable onFileCompletion,
+        ActionListener<Void> listener
+    ) {
+        final String file = queue.poll();
+        if (file == null) {
+            // Queue is empty, so notify listener we are done
+            listener.onResponse(null);
+        } else {
+            threadPool.executor(ThreadPool.Names.REMOTE_RECOVERY).submit(() -> {
+                logger.trace("Downloading file {}", file);
+                try {
+                    cancellableThreads.executeIO(() -> {
+                        destination.copyFrom(source, file, file, IOContext.DEFAULT);
+                        onFileCompletion.run();
+                        if (secondDestination != null) {
+                            secondDestination.copyFrom(destination, file, file, IOContext.DEFAULT);
+                        }
+                    });
+                } catch (Exception e) {
+                    // Clear the queue to stop any future processing, report the failure, then return
+                    queue.clear();
+                    listener.onFailure(e);
+                    return;
+                }
+                copyOneFile(cancellableThreads, source, destination, secondDestination, queue, onFileCompletion, listener);
+            });
+        }
+    }
+
+    // Virtual Thread Implementation
+    public void downloadAsync(
+        CancellableThreads cancellableThreads,
+        List<FileInfo> toDownloadSegments,
+        BiConsumer<String, Long> fileProgressTracker,
+        ActionListener<Void> listener
+    ) {
+        downloadFilesInternal(cancellableThreads, toDownloadSegments, fileProgressTracker, () -> {}, listener);
+    }
+
+    public void download(List<FileInfo> toDownloadSegments, BiConsumer<String, Long> fileProgressTracker, Runnable onFileCompletion)
+        throws InterruptedException, IOException {
+        final CancellableThreads cancellableThreads = new CancellableThreads();
+        final PlainActionFuture<Void> listener = PlainActionFuture.newFuture();
+        downloadFilesInternal(cancellableThreads, toDownloadSegments, fileProgressTracker, onFileCompletion, listener);
         try {
             listener.get();
         } catch (ExecutionException e) {
@@ -140,28 +233,37 @@ public final class RemoteStoreFileDownloader {
     private void downloadFilesInternal(
         CancellableThreads cancellableThreads,
         List<FileInfo> toDownloadSegments,
+        BiConsumer<String, Long> fileProgressTracker,
         Runnable onFileCompletion,
         ActionListener<Void> listener
     ) {
+        logger.error("Performing part based download: {}", toDownloadSegments.stream().map(FileInfo::getFileName).toList());
+        AtomicInteger downloadSegmentCount = new AtomicInteger(toDownloadSegments.size());
         for (FileInfo fileInfo : toDownloadSegments) {
             fileInfo.setFilePath(shardPath.resolveIndex().resolve(fileInfo.fileName));
             ActionListener<Void> fileListener = ActionListener.wrap(response -> {
                 IOUtils.fsync(fileInfo.getFilePath(), false);
                 onFileCompletion.run();
-                listener.onResponse(response);
+                if (downloadSegmentCount.decrementAndGet() == 0) {
+                    listener.onResponse(response);
+                }
             }, listener::onFailure);
             List<PartInfo> toDownloadSegmentParts = createParts(fileInfo);
-            downloadFileInternal(cancellableThreads, toDownloadSegmentParts, fileListener);
+            downloadFileInternal(cancellableThreads, toDownloadSegmentParts, fileProgressTracker, fileListener);
             // TODO: Possibly block per file?
         }
     }
 
-    private List<PartInfo> createParts(FileInfo toDownloadSegment) {
+    List<PartInfo> createParts(FileInfo toDownloadSegment) {
         List<PartInfo> fileParts = new ArrayList<>();
-        for (int i = 0; i < toDownloadSegment.length / PART_SIZE; i++) {
-            long offset = PART_SIZE * i;
-            long partSize = Math.min(toDownloadSegment.length, PART_SIZE * (i + 1)) - offset;
+        long remainingLength = toDownloadSegment.getLength();
+        int partNumber = 0;
+        while (remainingLength > 0) {
+            long offset = partNumber * PART_SIZE;
+            long partSize = Math.min(toDownloadSegment.length, PART_SIZE * (partNumber + 1)) - offset;
             fileParts.add(new PartInfo(toDownloadSegment.fileName, partSize, offset, toDownloadSegment.getFilePath()));
+            ++partNumber;
+            remainingLength = Math.max(0, remainingLength - PART_SIZE);
         }
         return fileParts;
     }
@@ -169,6 +271,7 @@ public final class RemoteStoreFileDownloader {
     private void downloadFileInternal(
         CancellableThreads cancellableThreads,
         List<PartInfo> toDownloadSegmentParts,
+        BiConsumer<String, Long> fileProgressTracker,
         ActionListener<Void> listener
     ) {
         final Queue<PartInfo> queue = new ConcurrentLinkedQueue<>(toDownloadSegmentParts);
@@ -181,16 +284,21 @@ public final class RemoteStoreFileDownloader {
                 toDownloadSegmentParts.size(),
                 Math.min(threadPool.info(ThreadPool.Names.REMOTE_RECOVERY).getMax(), recoverySettings.getMaxConcurrentRemoteStoreStreams())
             )
-            : toDownloadSegmentParts.size();
+            : Math.min(toDownloadSegmentParts.size(), recoverySettings.getMaxConcurrentRemoteStoreStreams());
 
-        logger.trace("Starting download of {} files with {} threads", queue.size(), threads);
+        logger.error("Starting download of {} files with {} threads", queue.size(), threads);
         final ActionListener<Void> allPartsListener = new GroupedActionListener<>(ActionListener.map(listener, r -> null), threads);
         for (int i = 0; i < threads; i++) {
-            copyOnePart(cancellableThreads, queue, allPartsListener);
+            copyOnePart(cancellableThreads, queue, fileProgressTracker, allPartsListener);
         }
     }
 
-    private void copyOnePart(CancellableThreads cancellableThreads, Queue<PartInfo> queue, ActionListener<Void> listener) {
+    private void copyOnePart(
+        CancellableThreads cancellableThreads,
+        Queue<PartInfo> queue,
+        BiConsumer<String, Long> fileProgressTracker,
+        ActionListener<Void> listener
+    ) {
         final PartInfo part = queue.poll();
         if (part == null) {
             // Queue is empty, so notify listener we are done
@@ -201,7 +309,7 @@ public final class RemoteStoreFileDownloader {
                 : threadPool.executor(ThreadPool.Names.REMOTE_RECOVERY);
             executor.submit(() -> {
                 String blobName = directory.getExistingRemoteFilename(part.getFileName());
-                logger.info("Downloading file {} corresponding to {} {}", part.getFileName(), blobName, Thread.currentThread());
+                logger.error("Downloading file {} corresponding to {} {}", part.getFileName(), blobName, Thread.currentThread());
                 try {
                     cancellableThreads.executeIO(() -> {
                         InputStream inputStream = blobContainer.readBlob(blobName, part.getOffset(), PART_SIZE);
@@ -211,6 +319,7 @@ public final class RemoteStoreFileDownloader {
                             part.getOffset()
                         );
                         FilePartWriter.write(part.getFilePath(), inputStreamContainer, UnaryOperator.identity());
+                        fileProgressTracker.accept(part.getFileName(), part.getPartSize());
                     });
                 } catch (Exception e) {
                     // Clear the queue to stop any future processing, report the failure, then return
@@ -218,11 +327,18 @@ public final class RemoteStoreFileDownloader {
                     listener.onFailure(e);
                     return;
                 }
-                copyOnePart(cancellableThreads, queue, listener);
+                copyOnePart(cancellableThreads, queue, fileProgressTracker, listener);
             });
         }
     }
 
+    /**
+     * Helper class to downloads files from a {@link RemoteSegmentStoreDirectory}
+     * instance to a local {@link Directory} instance in parallel depending on thread
+     * pool size and recovery settings.
+     *
+     * @opensearch.api
+     */
     public static class FileInfo {
         private String fileName;
         private long length;
@@ -256,8 +372,20 @@ public final class RemoteStoreFileDownloader {
         public void setFilePath(Path filePath) {
             this.filePath = filePath;
         }
+
+        @Override
+        public String toString() {
+            return "FileInfo{" + "fileName='" + fileName + '\'' + ", length=" + length + ", filePath=" + filePath + '}';
+        }
     }
 
+    /**
+     * Helper class to downloads files from a {@link RemoteSegmentStoreDirectory}
+     * instance to a local {@link Directory} instance in parallel depending on thread
+     * pool size and recovery settings.
+     *
+     * @opensearch.api
+     */
     public static class PartInfo {
         private String fileName;
         private long partSize;

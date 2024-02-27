@@ -14,7 +14,6 @@ import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.util.Version;
-import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.core.action.ActionListener;
@@ -124,28 +123,23 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
                 }
 
                 if (indexShard.getRecoverySettings().useStreamBasedDownloads()) {
-                    try {
-                        for (StoreFileMetadata file : filesToFetch) {
-                            final PlainActionFuture<String> segmentListener = PlainActionFuture.newFuture();
-                            remoteDirectory.copyTo(
-                                file.name(),
-                                storeDirectory,
-                                indexShard.shardPath().getDataPath(),
-                                indexShard.store().getDirectoryFileTransferTracker(),
-                                segmentListener
-                            );
-                            segmentListener.actionGet();
-                        }
-
-                        listener.onResponse(new GetSegmentFilesResponse(filesToFetch));
-                    } catch (Exception e) {
-                        listener.onFailure(e);
-                    }
-                } else {
                     indexShard.getFileDownloader()
                         .downloadAsync(
                             cancellableThreads,
                             toDownloadSegments,
+                            fileProgressTracker,
+                            ActionListener.map(listener, r -> new GetSegmentFilesResponse(filesToFetch))
+                        );
+                } else {
+                    List<String> toDownloadSegmentNames = toDownloadSegments.stream()
+                        .map(RemoteStoreFileDownloader.FileInfo::getFileName)
+                        .toList();
+                    indexShard.getFileDownloader()
+                        .downloadAsync(
+                            cancellableThreads,
+                            remoteDirectory,
+                            new ReplicationStatsDirectoryWrapper(storeDirectory, fileProgressTracker),
+                            toDownloadSegmentNames,
                             ActionListener.map(listener, r -> new GetSegmentFilesResponse(filesToFetch))
                         );
                 }

@@ -187,7 +187,7 @@ public class RecoverySettings {
 
     public static final Setting<Boolean> INDICES_RECOVERY_USE_MULTISTREAM_DOWNLOADS = Setting.boolSetting(
         "indices.recovery.use_multistream",
-        false,
+        true,
         Property.Dynamic,
         Property.NodeScope
     );
