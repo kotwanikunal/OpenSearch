@@ -62,6 +62,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 /**
@@ -146,6 +147,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
     public BlobContainer getSegmentBlobContainer() {
         return remoteDataDirectory.getBlobContainer();
+    }
+
+    public UnaryOperator<InputStream> getRateLimiter() {
+        return remoteDataDirectory.getDownloadRateLimiter();
     }
 
     /**

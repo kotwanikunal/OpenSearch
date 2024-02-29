@@ -35,13 +35,14 @@ import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
-import java.util.function.UnaryOperator;
 
 /**
  * Helper class to downloads files from a {@link RemoteSegmentStoreDirectory}
@@ -240,32 +241,25 @@ public final class RemoteStoreFileDownloader {
         ActionListener<Void> listener
     ) {
         logger.error("Performing part based download: {}", toDownloadSegments.stream().map(FileInfo::getFileName).toList());
-        AtomicInteger downloadSegmentCount = new AtomicInteger(toDownloadSegments.size());
-        for (FileInfo fileInfo : toDownloadSegments) {
-            fileInfo.setFilePath(shardPath.resolveIndex().resolve(fileInfo.fileName));
-            ActionListener<Void> fileListener = ActionListener.wrap(response -> {
-                IOUtils.fsync(fileInfo.getFilePath(), false);
-                onFileCompletion.run();
-                if (downloadSegmentCount.decrementAndGet() == 0) {
-                    listener.onResponse(response);
-                }
-            }, listener::onFailure);
-            List<PartInfo> toDownloadSegmentParts = createParts(fileInfo);
-            downloadFileInternal(cancellableThreads, toDownloadSegmentParts, fileProgressTracker, fileListener);
-            // TODO: Possibly block per file?
-        }
+        toDownloadSegments.forEach(fileInfo -> fileInfo.setFilePath(shardPath.resolveIndex().resolve(fileInfo.fileName)));
+        Map<String, AtomicInteger> partsTracker = new ConcurrentHashMap<>();
+        List<PartInfo> toDownloadSegmentParts = createParts(toDownloadSegments, partsTracker);
+        downloadFileInternal(cancellableThreads, toDownloadSegmentParts, partsTracker, onFileCompletion, fileProgressTracker, listener);
     }
 
-    List<PartInfo> createParts(FileInfo toDownloadSegment) {
+    List<PartInfo> createParts(List<FileInfo> toDownloadSegments, Map<String, AtomicInteger> partTracker) {
         List<PartInfo> fileParts = new ArrayList<>();
-        long remainingLength = toDownloadSegment.getLength();
-        int partNumber = 0;
-        while (remainingLength > 0) {
-            long offset = partNumber * PART_SIZE;
-            long partSize = Math.min(toDownloadSegment.length, PART_SIZE * (partNumber + 1)) - offset;
-            fileParts.add(new PartInfo(toDownloadSegment.fileName, partSize, offset, toDownloadSegment.getFilePath()));
-            ++partNumber;
-            remainingLength = Math.max(0, remainingLength - PART_SIZE);
+        for (FileInfo toDownloadSegment : toDownloadSegments) {
+            long remainingLength = toDownloadSegment.getLength();
+            int partNumber = 0;
+            while (remainingLength > 0) {
+                long offset = partNumber * PART_SIZE;
+                long partSize = Math.min(toDownloadSegment.length, PART_SIZE * (partNumber + 1)) - offset;
+                fileParts.add(new PartInfo(toDownloadSegment.fileName, partSize, offset, toDownloadSegment.getFilePath()));
+                ++partNumber;
+                remainingLength = Math.max(0, remainingLength - PART_SIZE);
+            }
+            partTracker.put(toDownloadSegment.getFileName(), new AtomicInteger(partNumber));
         }
         return fileParts;
     }
@@ -273,6 +267,8 @@ public final class RemoteStoreFileDownloader {
     private void downloadFileInternal(
         CancellableThreads cancellableThreads,
         List<PartInfo> toDownloadSegmentParts,
+        Map<String, AtomicInteger> partTracker,
+        Runnable onFileCompletion,
         BiConsumer<String, Long> fileProgressTracker,
         ActionListener<Void> listener
     ) {
@@ -281,17 +277,21 @@ public final class RemoteStoreFileDownloader {
         // - number of files to download
         // - max thread pool size
         // - "indices.recovery.max_concurrent_remote_store_streams" setting
-        final int threads = recoverySettings.limitRemoteStreams()
+        int threads = recoverySettings.limitRemoteStreams()
             ? Math.min(
                 toDownloadSegmentParts.size(),
                 Math.min(threadPool.info(ThreadPool.Names.REMOTE_RECOVERY).getMax(), recoverySettings.getMaxConcurrentRemoteStoreStreams())
             )
             : Math.min(toDownloadSegmentParts.size(), recoverySettings.getMaxConcurrentRemoteStoreStreams());
+        final int optionalVirtualThreadQueueSize = recoverySettings.useVirtualThreads() ? threads * 10 : threads;
+        logger.error("Starting download of {} files with {} threads", queue.size(), optionalVirtualThreadQueueSize);
 
-        logger.error("Starting download of {} files with {} threads", queue.size(), threads);
-        final ActionListener<Void> allPartsListener = new GroupedActionListener<>(ActionListener.map(listener, r -> null), threads);
-        for (int i = 0; i < threads; i++) {
-            copyOnePart(cancellableThreads, queue, fileProgressTracker, allPartsListener);
+        final ActionListener<Void> allPartsListener = new GroupedActionListener<>(
+            ActionListener.map(listener, r -> null),
+            optionalVirtualThreadQueueSize
+        );
+        for (int i = 0; i < optionalVirtualThreadQueueSize; i++) {
+            copyOnePart(cancellableThreads, queue, partTracker, onFileCompletion, fileProgressTracker, allPartsListener);
         }
     }
 
@@ -299,6 +299,8 @@ public final class RemoteStoreFileDownloader {
     private void copyOnePart(
         CancellableThreads cancellableThreads,
         Queue<PartInfo> queue,
+        Map<String, AtomicInteger> partTracker,
+        Runnable onFileCompletion,
         BiConsumer<String, Long> fileProgressTracker,
         ActionListener<Void> listener
     ) {
@@ -310,12 +312,18 @@ public final class RemoteStoreFileDownloader {
             ExecutorService executor = recoverySettings.useVirtualThreads()
                 ? threadPool.virtual()
                 : threadPool.executor(ThreadPool.Names.REMOTE_RECOVERY);
-
             executor.submit(() -> AccessController.doPrivileged(new PrivilegedAction<Void>() {
                 @Override
                 public Void run() {
                     String blobName = directory.getExistingRemoteFilename(part.getFileName());
-                    logger.error("Downloading file {} corresponding to {} {}", part.getFileName(), blobName, Thread.currentThread());
+                    logger.error(
+                        "Downloading file {} from {} to {} corresponding to {} {}",
+                        part.getFileName(),
+                        part.getOffset(),
+                        part.getOffset() + part.getPartSize(),
+                        blobName,
+                        Thread.currentThread()
+                    );
                     try {
                         cancellableThreads.executeIO(() -> {
                             InputStream inputStream = blobContainer.readBlob(blobName, part.getOffset(), PART_SIZE);
@@ -324,8 +332,15 @@ public final class RemoteStoreFileDownloader {
                                 inputStream.available(),
                                 part.getOffset()
                             );
-                            FilePartWriter.write(part.getFilePath(), inputStreamContainer, UnaryOperator.identity());
+
+                            FilePartWriter.write(part.getFilePath(), inputStreamContainer, directory.getRateLimiter());
                             fileProgressTracker.accept(part.getFileName(), part.getPartSize());
+
+                            if (partTracker.get(part.getFileName()).decrementAndGet() == 0) {
+                                IOUtils.fsync(part.getFilePath(), false);
+                                onFileCompletion.run();
+                            }
+
                         });
                     } catch (Exception e) {
                         // Clear the queue to stop any future processing, report the failure, then return
@@ -333,7 +348,7 @@ public final class RemoteStoreFileDownloader {
                         listener.onFailure(e);
                         return null;
                     }
-                    copyOnePart(cancellableThreads, queue, fileProgressTracker, listener);
+                    copyOnePart(cancellableThreads, queue, partTracker, onFileCompletion, fileProgressTracker, listener);
                     return null;
                 }
             }));

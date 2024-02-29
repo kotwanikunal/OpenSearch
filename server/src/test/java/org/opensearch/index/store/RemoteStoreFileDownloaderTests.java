@@ -37,6 +37,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -192,17 +193,19 @@ public class RemoteStoreFileDownloaderTests extends OpenSearchTestCase {
     }
 
     public void testPartsCreator() {
-        RemoteStoreFileDownloader.FileInfo fileInfo = new RemoteStoreFileDownloader.FileInfo("test", PART_SIZE * 2);
-        List<RemoteStoreFileDownloader.PartInfo> parts = fileDownloader.createParts(fileInfo);
-        assertEquals(2, parts.size());
+        Map<String, AtomicInteger> partsTracker = new ConcurrentHashMap<>();
+        List<RemoteStoreFileDownloader.FileInfo> segments = List.of(
+            new RemoteStoreFileDownloader.FileInfo("test1", PART_SIZE * 2),
+            new RemoteStoreFileDownloader.FileInfo("test2", 100),
+            new RemoteStoreFileDownloader.FileInfo("test3", (PART_SIZE * 100) + 1)
+        );
 
-        fileInfo = new RemoteStoreFileDownloader.FileInfo("test", 100);
-        parts = fileDownloader.createParts(fileInfo);
-        assertEquals(1, parts.size());
-
-        fileInfo = new RemoteStoreFileDownloader.FileInfo("test", (PART_SIZE * 100) + 1);
-        parts = fileDownloader.createParts(fileInfo);
-        assertEquals(101, parts.size());
+        List<RemoteStoreFileDownloader.PartInfo> parts = fileDownloader.createParts(segments, partsTracker);
+        assertEquals(2 + 1 + 101, parts.size());
+        assertEquals(3, partsTracker.size());
+        assertEquals(2, partsTracker.get("test1").get());
+        assertEquals(1, partsTracker.get("test2").get());
+        assertEquals(101, partsTracker.get("test3").get());
     }
 
     public void testIOException() throws IOException, InterruptedException {
