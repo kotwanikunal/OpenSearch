@@ -216,6 +216,10 @@ public class SecureSM extends SecurityManager {
     protected void checkThreadAccess(Thread t) {
         Objects.requireNonNull(t);
 
+        if (t.isVirtual() || Thread.currentThread().isVirtual()) {
+            return;
+        }
+
         // first, check if we can modify threads at all.
         checkPermission(MODIFY_THREAD_PERMISSION);
 
@@ -236,11 +240,16 @@ public class SecureSM extends SecurityManager {
     protected void checkThreadGroupAccess(ThreadGroup g) {
         Objects.requireNonNull(g);
 
+        final ThreadGroup source = Thread.currentThread().getThreadGroup();
+        if (g.getName().contains("VirtualThread") || source.getName().contains("VirtualThread")) {
+            return;
+        }
+
         // first, check if we can modify thread groups at all.
         checkPermission(MODIFY_THREADGROUP_PERMISSION);
 
         // check the threadgroup, if its our thread group or an ancestor, its fine.
-        final ThreadGroup source = Thread.currentThread().getThreadGroup();
+
         final ThreadGroup target = g;
 
         if (source == null) {

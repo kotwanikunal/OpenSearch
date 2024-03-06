@@ -16,12 +16,14 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.NIOFSDirectory;
 import org.opensearch.OpenSearchTimeoutException;
 import org.opensearch.action.support.PlainActionFuture;
+import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.index.shard.ShardPath;
 import org.opensearch.indices.recovery.RecoverySettings;
 import org.opensearch.test.OpenSearchTestCase;
 import org.opensearch.threadpool.TestThreadPool;
@@ -29,9 +31,12 @@ import org.opensearch.threadpool.ThreadPool;
 import org.junit.After;
 import org.junit.Before;
 
+import java.io.ByteArrayInputStream;
 import java.io.EOFException;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -42,8 +47,14 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.UnaryOperator;
 
 import static org.opensearch.index.store.RemoteStoreFileDownloader.PART_SIZE;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class RemoteStoreFileDownloaderTests extends OpenSearchTestCase {
 
@@ -52,31 +63,50 @@ public class RemoteStoreFileDownloaderTests extends OpenSearchTestCase {
     private Directory destination;
     private Directory secondDestination;
     private RemoteStoreFileDownloader fileDownloader;
+    private ShardPath shardPath;
     private Map<String, Integer> files = new HashMap<>();
 
     @Before
     public void setup() throws IOException {
         final int streamLimit = randomIntBetween(1, 20);
         final RecoverySettings recoverySettings = new RecoverySettings(
-            Settings.builder().put("indices.recovery.max_concurrent_remote_store_streams", streamLimit).build(),
+            Settings.builder()
+                .put("indices.recovery.max_concurrent_remote_store_streams", streamLimit)
+                .put("indices.recovery.use_virtual_threads", true)
+                .build(),
             new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS)
         );
         threadPool = new TestThreadPool(getTestName());
         source = new NIOFSDirectory(createTempDir());
         destination = new NIOFSDirectory(createTempDir());
         secondDestination = new NIOFSDirectory(createTempDir());
+        BlobContainer blobContainer = mock(BlobContainer.class);
+        RemoteSegmentStoreDirectory remoteDirectory = mock(RemoteSegmentStoreDirectory.class);
+        when(remoteDirectory.getSegmentBlobContainer()).thenReturn(blobContainer);
+
+        Path toDataPath = createTempDir().resolve("test").resolve("1");
+        shardPath = new ShardPath(false, toDataPath, toDataPath, new ShardId("test", "test", 1));
+        Files.createDirectories(shardPath.resolveIndex());
+
         for (int i = 0; i < 10; i++) {
             final String filename = "file_" + i;
             final int content = randomInt();
             try (IndexOutput output = source.createOutput(filename, IOContext.DEFAULT)) {
                 output.writeInt(content);
+                when(remoteDirectory.getExistingRemoteFilename(filename)).thenReturn(filename);
+                when(remoteDirectory.getRateLimiter()).thenReturn(UnaryOperator.identity());
+                when(blobContainer.readBlob(eq(filename), anyLong(), anyLong())).thenReturn(
+                    new ByteArrayInputStream(randomByteArrayOfLength(32))
+                );
             }
             files.put(filename, content);
         }
         fileDownloader = new RemoteStoreFileDownloader(
             ShardId.fromString("[RemoteStoreFileDownloaderTests][0]"),
             threadPool,
-            recoverySettings
+            recoverySettings,
+            shardPath,
+            remoteDirectory
         );
     }
 
@@ -103,6 +133,18 @@ public class RemoteStoreFileDownloaderTests extends OpenSearchTestCase {
         final AtomicInteger counter = new AtomicInteger(0);
         fileDownloader.download(source, destination, null, files.keySet(), counter::incrementAndGet);
         assertContent(files, destination);
+        assertEquals(files.size(), counter.get());
+    }
+
+    public void testDownloadWithFileCompletionHandlerOther() throws IOException, InterruptedException {
+        final AtomicInteger counter = new AtomicInteger(0);
+        BiConsumer<String, Long> updateTracker = (a, b) -> {};
+        List<RemoteStoreFileDownloader.FileInfo> fileInfos = files.keySet()
+            .stream()
+            .map(fileName -> new RemoteStoreFileDownloader.FileInfo(fileName, 32))
+            .toList();
+        fileDownloader.download(fileInfos, updateTracker, counter::incrementAndGet);
+        assertContentMultiPart(files, shardPath.resolveIndex());
         assertEquals(files.size(), counter.get());
     }
 
@@ -242,6 +284,16 @@ public class RemoteStoreFileDownloaderTests extends OpenSearchTestCase {
                 assertEquals(expected.get(file), Integer.valueOf(input.readInt()));
                 assertThrows(EOFException.class, input::readByte);
             }
+        }
+    }
+
+    private static void assertContentMultiPart(Map<String, Integer> expected, Path destination) throws IOException {
+        // Note that Lucene will randomly write extra files (see org.apache.lucene.tests.mockfile.ExtraFS)
+        // so we just need to check that all the expected files are present but not that _only_ the expected
+        // files are present
+        for (String file : expected.keySet()) {
+            assertTrue(Files.exists(destination.resolve(file)));
+            assertEquals(32, Files.size(destination.resolve(file)));
         }
     }
 }

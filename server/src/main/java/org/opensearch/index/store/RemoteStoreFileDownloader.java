@@ -52,6 +52,7 @@ import java.util.function.BiConsumer;
  * @opensearch.api
  */
 @PublicApi(since = "2.11.0")
+@SuppressWarnings("removal")
 public final class RemoteStoreFileDownloader {
     private final Logger logger;
     private final ThreadPool threadPool;
@@ -283,7 +284,7 @@ public final class RemoteStoreFileDownloader {
                 Math.min(threadPool.info(ThreadPool.Names.REMOTE_RECOVERY).getMax(), recoverySettings.getMaxConcurrentRemoteStoreStreams())
             )
             : Math.min(toDownloadSegmentParts.size(), recoverySettings.getMaxConcurrentRemoteStoreStreams());
-        final int optionalVirtualThreadQueueSize = recoverySettings.useVirtualThreads() ? threads * 10 : threads;
+        final int optionalVirtualThreadQueueSize = recoverySettings.useVirtualThreads() ? threads : threads;
         logger.error("Starting download of {} files with {} threads", queue.size(), optionalVirtualThreadQueueSize);
 
         final ActionListener<Void> allPartsListener = new GroupedActionListener<>(
@@ -295,7 +296,6 @@ public final class RemoteStoreFileDownloader {
         }
     }
 
-    @SuppressWarnings("any")
     private void copyOnePart(
         CancellableThreads cancellableThreads,
         Queue<PartInfo> queue,
@@ -312,46 +312,58 @@ public final class RemoteStoreFileDownloader {
             ExecutorService executor = recoverySettings.useVirtualThreads()
                 ? threadPool.virtual()
                 : threadPool.executor(ThreadPool.Names.REMOTE_RECOVERY);
-            executor.submit(() -> AccessController.doPrivileged(new PrivilegedAction<Void>() {
-                @Override
-                public Void run() {
-                    String blobName = directory.getExistingRemoteFilename(part.getFileName());
-                    logger.error(
-                        "Downloading file {} from {} to {} corresponding to {} {}",
-                        part.getFileName(),
-                        part.getOffset(),
-                        part.getOffset() + part.getPartSize(),
-                        blobName,
-                        Thread.currentThread()
-                    );
-                    try {
-                        cancellableThreads.executeIO(() -> {
-                            InputStream inputStream = blobContainer.readBlob(blobName, part.getOffset(), PART_SIZE);
-                            InputStreamContainer inputStreamContainer = new InputStreamContainer(
-                                inputStream,
-                                inputStream.available(),
-                                part.getOffset()
+            executor.submit(() -> {
+                try {
+                    AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
+                        {
+                            String blobName = directory.getExistingRemoteFilename(part.getFileName());
+                            logger.error(
+                                "Downloading file {} from {} to {} corresponding to {} {}",
+                                part.getFileName(),
+                                part.getOffset(),
+                                part.getOffset() + part.getPartSize(),
+                                blobName,
+                                Thread.currentThread()
                             );
+                            try {
+                                cancellableThreads.executeIO(() -> {
+                                    InputStream inputStream = blobContainer.readBlob(blobName, part.getOffset(), PART_SIZE);
+                                    logger.error("InputStream returned from blobcontainer {}", inputStream);
 
-                            FilePartWriter.write(part.getFilePath(), inputStreamContainer, directory.getRateLimiter());
-                            fileProgressTracker.accept(part.getFileName(), part.getPartSize());
+                                    InputStreamContainer inputStreamContainer = new InputStreamContainer(
+                                        inputStream,
+                                        inputStream.available(),
+                                        part.getOffset()
+                                    );
+                                    logger.error("InputStreamContainer created {}", inputStreamContainer);
 
-                            if (partTracker.get(part.getFileName()).decrementAndGet() == 0) {
-                                IOUtils.fsync(part.getFilePath(), false);
-                                onFileCompletion.run();
+                                    FilePartWriter.write(part.getFilePath(), inputStreamContainer, directory.getRateLimiter());
+                                    logger.error("Part write completed {} {}", queue, part);
+
+                                    fileProgressTracker.accept(part.getFileName(), part.getPartSize());
+
+                                    if (partTracker.get(part.getFileName()).decrementAndGet() == 0) {
+                                        IOUtils.fsync(part.getFilePath(), false);
+                                        onFileCompletion.run();
+                                    }
+
+                                });
+                            } catch (Exception e) {
+                                // Clear the queue to stop any future processing, report the failure, then return
+                                logger.error("Error while writing a part for file {}", part.getFileName(), e);
+                                queue.clear();
+                                listener.onFailure(e);
+                                return null;
                             }
+                            copyOnePart(cancellableThreads, queue, partTracker, onFileCompletion, fileProgressTracker, listener);
+                            return null;
+                        }
+                    });
 
-                        });
-                    } catch (Exception e) {
-                        // Clear the queue to stop any future processing, report the failure, then return
-                        queue.clear();
-                        listener.onFailure(e);
-                        return null;
-                    }
-                    copyOnePart(cancellableThreads, queue, partTracker, onFileCompletion, fileProgressTracker, listener);
-                    return null;
+                } catch (Throwable throwable) {
+                    logger.error("Privileged block execution error: ", throwable);
                 }
-            }));
+            });
         }
     }
 
@@ -454,4 +466,5 @@ public final class RemoteStoreFileDownloader {
             this.filePath = filePath;
         }
     }
+
 }
