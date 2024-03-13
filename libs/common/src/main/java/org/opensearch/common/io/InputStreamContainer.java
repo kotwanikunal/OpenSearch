@@ -23,6 +23,7 @@ public class InputStreamContainer {
     private final InputStream inputStream;
     private final long contentLength;
     private final long offset;
+    private final Integer partNumber;
 
     /**
      * Construct a new stream object
@@ -31,9 +32,14 @@ public class InputStreamContainer {
      * @param contentLength The total content length that is to be read from the stream
      */
     public InputStreamContainer(InputStream inputStream, long contentLength, long offset) {
+        this(inputStream, contentLength, offset, null);
+    }
+
+    public InputStreamContainer(InputStream inputStream, long contentLength, long offset, Integer partNumber) {
         this.inputStream = inputStream;
         this.contentLength = contentLength;
         this.offset = offset;
+        this.partNumber = partNumber;
     }
 
     /**
@@ -55,5 +61,9 @@ public class InputStreamContainer {
      */
     public long getOffset() {
         return offset;
+    }
+
+    public Integer getPartNumber() {
+        return partNumber;
     }
 }

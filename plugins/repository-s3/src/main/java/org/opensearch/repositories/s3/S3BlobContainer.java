@@ -749,7 +749,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
 
         return SocketAccess.doPrivileged(
             () -> s3AsyncClient.getObject(getObjectRequestBuilder.build(), AsyncResponseTransformer.toBlockingInputStream())
-                .thenApply(response -> transformResponseToInputStreamContainer(response, isMultipartObject))
+                .thenApply(response -> transformResponseToInputStreamContainer(response, isMultipartObject, partNumber))
         );
     }
 
@@ -762,7 +762,8 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
     // Package-Private for testing.
     static InputStreamContainer transformResponseToInputStreamContainer(
         ResponseInputStream<GetObjectResponse> streamResponse,
-        boolean isMultipartObject
+        boolean isMultipartObject,
+        Integer partNumber
     ) {
         final GetObjectResponse getObjectResponse = streamResponse.response();
         final String contentRange = getObjectResponse.contentRange();
@@ -771,7 +772,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
             throw SdkException.builder().message("Failed to fetch required metadata for blob part").build();
         }
         final long offset = isMultipartObject ? HttpRangeUtils.getStartOffsetFromRangeHeader(getObjectResponse.contentRange()) : 0L;
-        return new InputStreamContainer(streamResponse, getObjectResponse.contentLength(), offset);
+        return new InputStreamContainer(streamResponse, getObjectResponse.contentLength(), offset, partNumber);
     }
 
     /**
