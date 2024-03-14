@@ -16,14 +16,17 @@ import org.opensearch.common.SuppressForbidden;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.annotation.InternalApi;
 import org.opensearch.common.blobstore.stream.read.ReadContext;
+import org.opensearch.common.blobstore.stream.read.reactive.PartSubscriber;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.AsynchronousFileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.Collection;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -159,13 +162,32 @@ public class ReadContextListener implements ActionListener<ReadContext> {
                 } else if (anyPartStreamFailed.get()) {
                     processFailure(CANCELED_PART_EXCEPTION);
                 } else {
-                    try {
-                        FilePartWriter.write(fileLocation, blobPartStreamContainer, rateLimiter);
-                        completionListener.onResponse(fileLocation.toString());
+                    try (AsynchronousFileChannel fileChannel = AsynchronousFileChannel.open(fileLocation, StandardOpenOption.WRITE)) {
+                        // Needs cleanup
+                        ActionListener<String> partListener = ActionListener.wrap(response -> {
+                            completionListener.onResponse(fileLocation.toString());
+                            // Upon successfully completing a file part, pull another
+                            // file part off the queue to trigger asynchronous processing
+                            process(queue.poll());
+                        }, this::processFailure);
+                        PartSubscriber partSubscriber = new PartSubscriber(
+                            fileChannel,
+                            fileLocation,
+                            partListener,
+                            error -> processFailure(new Exception(error)),
+                            blobPartStreamContainer.getOffset()
+                        );
+                        blobPartStreamContainer.getPublisher().subscribe(partSubscriber);
+
+                        // Do this in case of blocking input stream
+                        // completionListener.onResponse(fileLocation.toString());
+                        // FilePartWriter.write(fileLocation, blobPartStreamContainer, rateLimiter);
+                        // completionListener.onResponse(fileLocation.toString());
 
                         // Upon successfully completing a file part, pull another
                         // file part off the queue to trigger asynchronous processing
-                        process(queue.poll());
+                        // process(queue.poll());
+
                     } catch (Exception e) {
                         processFailure(e);
                     }

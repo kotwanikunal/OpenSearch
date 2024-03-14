@@ -18,6 +18,7 @@ base {
 }
 
 dependencies {
+  api 'org.reactivestreams:reactive-streams:1.0.4'
   // This dependency is used only by :libs:core for null-checking interop with other tools
   compileOnly "com.google.code.findbugs:jsr305:3.0.2"
 
@@ -59,6 +60,7 @@ if (BuildParams.runtimeJavaVersion >= JavaVersion.VERSION_20) {
   }
 
   dependencies {
+    api 'org.reactivestreams:reactive-streams:1.0.4'
     java20Implementation sourceSets.main.output
   }
 

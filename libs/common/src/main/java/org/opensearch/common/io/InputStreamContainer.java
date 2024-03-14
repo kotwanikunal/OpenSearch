@@ -11,6 +11,9 @@ package org.opensearch.common.io;
 import org.opensearch.common.annotation.ExperimentalApi;
 
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+
+import org.reactivestreams.Publisher;
 
 /**
  * Model composed of an input stream and the total content length of the stream
@@ -24,6 +27,7 @@ public class InputStreamContainer {
     private final long contentLength;
     private final long offset;
     private final Integer partNumber;
+    private final Publisher<ByteBuffer> publisher;
 
     /**
      * Construct a new stream object
@@ -32,14 +36,21 @@ public class InputStreamContainer {
      * @param contentLength The total content length that is to be read from the stream
      */
     public InputStreamContainer(InputStream inputStream, long contentLength, long offset) {
-        this(inputStream, contentLength, offset, null);
+        this(inputStream, contentLength, offset, null, null);
     }
 
-    public InputStreamContainer(InputStream inputStream, long contentLength, long offset, Integer partNumber) {
+    public InputStreamContainer(
+        InputStream inputStream,
+        long contentLength,
+        long offset,
+        Integer partNumber,
+        Publisher<ByteBuffer> publisher
+    ) {
         this.inputStream = inputStream;
         this.contentLength = contentLength;
         this.offset = offset;
         this.partNumber = partNumber;
+        this.publisher = publisher;
     }
 
     /**
@@ -66,4 +77,9 @@ public class InputStreamContainer {
     public Integer getPartNumber() {
         return partNumber;
     }
+
+    public Publisher<ByteBuffer> getPublisher() {
+        return publisher;
+    }
+
 }
