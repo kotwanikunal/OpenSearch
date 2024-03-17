@@ -597,6 +597,16 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
         }
 
         @Override
+        public DecryptedRangedStreamProvider createDecryptingStreamFromEncryptedOffsets(
+            Object cryptoContext,
+            long fullEncryptedLength,
+            long startPosOfEncContent,
+            long endPosOfEncContent
+        ) {
+            return null;
+        }
+
+        @Override
         public long estimateDecryptedLength(Object cryptoContext, long contentLength) {
             return 0;
         }
