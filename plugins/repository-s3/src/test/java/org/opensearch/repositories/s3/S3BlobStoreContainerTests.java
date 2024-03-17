@@ -1223,10 +1223,7 @@ public class S3BlobStoreContainerTests extends OpenSearchTestCase {
 
         // Exception when content range absent for multipart object
         ResponseInputStream<GetObjectResponse> responseInputStreamNoRange = new ResponseInputStream<>(getObjectResponse, inputStream);
-        assertThrows(
-            SdkException.class,
-            () -> S3BlobContainer.transformResponseToInputStreamContainer(responseInputStreamNoRange, true, null)
-        );
+        assertThrows(SdkException.class, () -> S3BlobContainer.transformResponseToInputStreamContainer(responseInputStreamNoRange, true));
 
         // No exception when content range absent for single part object
         ResponseInputStream<GetObjectResponse> responseInputStreamNoRangeSinglePart = new ResponseInputStream<>(
@@ -1235,8 +1232,7 @@ public class S3BlobStoreContainerTests extends OpenSearchTestCase {
         );
         InputStreamContainer inputStreamContainer = S3BlobContainer.transformResponseToInputStreamContainer(
             responseInputStreamNoRangeSinglePart,
-            false,
-            null
+            false
         );
         assertEquals(contentLength, inputStreamContainer.getContentLength());
         assertEquals(0, inputStreamContainer.getOffset());
@@ -1249,13 +1245,13 @@ public class S3BlobStoreContainerTests extends OpenSearchTestCase {
         );
         assertThrows(
             SdkException.class,
-            () -> S3BlobContainer.transformResponseToInputStreamContainer(responseInputStreamNoContentLength, true, null)
+            () -> S3BlobContainer.transformResponseToInputStreamContainer(responseInputStreamNoContentLength, true)
         );
 
         // No exception when range and length both are present
         getObjectResponse = GetObjectResponse.builder().contentRange(contentRange).contentLength(contentLength).build();
         ResponseInputStream<GetObjectResponse> responseInputStream = new ResponseInputStream<>(getObjectResponse, inputStream);
-        inputStreamContainer = S3BlobContainer.transformResponseToInputStreamContainer(responseInputStream, true, null);
+        inputStreamContainer = S3BlobContainer.transformResponseToInputStreamContainer(responseInputStream, true);
         assertEquals(contentLength, inputStreamContainer.getContentLength());
         assertEquals(0, inputStreamContainer.getOffset());
         assertEquals(inputStream.available(), inputStreamContainer.getInputStream().available());

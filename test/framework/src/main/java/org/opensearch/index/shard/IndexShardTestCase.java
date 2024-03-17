@@ -790,14 +790,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
         RemoteStoreLockManager remoteStoreLockManager = new RemoteStoreMetadataLockManager(
             new RemoteBufferedOutputDirectory(getBlobContainer(remoteShardPath.resolveIndex().resolve("lock_files")))
         );
-        return new RemoteSegmentStoreDirectory(
-            dataDirectory,
-            metadataDirectory,
-            remoteStoreLockManager,
-            threadPool,
-            shardId,
-            DefaultRecoverySettings.INSTANCE
-        );
+        return new RemoteSegmentStoreDirectory(dataDirectory, metadataDirectory, remoteStoreLockManager, threadPool, shardId, DefaultRecoverySettings.INSTANCE);
     }
 
     private RemoteDirectory newRemoteDirectory(Path f) throws IOException {

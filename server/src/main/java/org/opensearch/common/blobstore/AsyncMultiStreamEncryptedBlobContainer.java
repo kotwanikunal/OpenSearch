@@ -15,7 +15,6 @@ import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.DecryptedRangedStreamProvider;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.core.action.ActionListener;
-import org.opensearch.core.common.unit.ByteSizeValue;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -127,18 +126,20 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
 
         private final CryptoHandler<T, U> cryptoHandler;
         private final U cryptoContext;
-        private final Long blobSize;
-        private static final long MAX_UPLOAD_PARTS = 10_000;
+        private Long blobSize;
 
         public DecryptedReadContext(ReadContext readContext, CryptoHandler<T, U> cryptoHandler, U cryptoContext) {
             super(readContext);
             this.cryptoHandler = cryptoHandler;
             this.cryptoContext = cryptoContext;
-            this.blobSize = this.cryptoHandler.estimateDecryptedLength(cryptoContext, super.getBlobSize());
         }
 
         @Override
         public long getBlobSize() {
+            // initializes the value lazily
+            if (blobSize == null) {
+                this.blobSize = this.cryptoHandler.estimateDecryptedLength(cryptoContext, super.getBlobSize());
+            }
             return this.blobSize;
         }
 
@@ -155,21 +156,16 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
          * @return decrypted input stream container instance
          */
         private InputStreamContainer decryptInputStreamContainer(InputStreamContainer inputStreamContainer) {
-            int currentPartNumber = inputStreamContainer.getPartNumber();
-            double optimalPartSize = Math.ceil(getBlobSize() / (double) MAX_UPLOAD_PARTS);
-            long partSize = (long) Math.max(optimalPartSize, ByteSizeValue.ZERO.getMb() * 16);
-
-            long startOfStream = (currentPartNumber - 1) * partSize;
-            long endOfStream = Math.min((currentPartNumber * partSize), getBlobSize());
-
+            long startOfStream = inputStreamContainer.getOffset();
+            long endOfStream = startOfStream + inputStreamContainer.getContentLength() - 1;
             DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamOfRange(
                 cryptoContext,
                 startOfStream,
                 endOfStream
             );
 
-            long adjustedPos = startOfStream;
-            long adjustedLength = endOfStream - adjustedPos + 1;
+            long adjustedPos = decryptedStreamProvider.getAdjustedRange()[0];
+            long adjustedLength = decryptedStreamProvider.getAdjustedRange()[1] - adjustedPos + 1;
             final InputStream decryptedStream = decryptedStreamProvider.getDecryptedStreamProvider()
                 .apply(inputStreamContainer.getInputStream());
             return new InputStreamContainer(decryptedStream, adjustedLength, adjustedPos);

@@ -96,7 +96,6 @@ public class RemoteDirectory extends Directory {
     public String[] listAll() throws IOException {
         return blobContainer.listBlobs().keySet().stream().sorted().toArray(String[]::new);
     }
-
     protected UnaryOperator<InputStream> getDownloadRateLimiter() {
         return downloadRateLimiter;
     }

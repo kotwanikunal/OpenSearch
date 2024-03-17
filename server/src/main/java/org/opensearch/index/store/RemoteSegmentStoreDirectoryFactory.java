@@ -43,18 +43,12 @@ public class RemoteSegmentStoreDirectoryFactory implements IndexStorePlugin.Dire
     private final RecoverySettings recoverySettings;
 
     public RemoteSegmentStoreDirectoryFactory(Supplier<RepositoriesService> repositoriesService, ThreadPool threadPool) {
-        this(
-            repositoriesService,
-            threadPool,
-            new RecoverySettings(Settings.EMPTY, new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS))
-        );
+        this(repositoriesService, threadPool, new RecoverySettings(
+            Settings.EMPTY,
+            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS)
+        ));
     }
-
-    public RemoteSegmentStoreDirectoryFactory(
-        Supplier<RepositoriesService> repositoriesService,
-        ThreadPool threadPool,
-        RecoverySettings recoverySettings
-    ) {
+    public RemoteSegmentStoreDirectoryFactory(Supplier<RepositoriesService> repositoriesService, ThreadPool threadPool, RecoverySettings recoverySettings) {
         this.repositoriesService = repositoriesService;
         this.threadPool = threadPool;
         this.recoverySettings = recoverySettings;
