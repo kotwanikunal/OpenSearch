@@ -34,7 +34,6 @@ package org.opensearch.repositories.s3;
 
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
-import software.amazon.awssdk.core.async.ResponsePublisher;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
@@ -748,25 +747,10 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
             getObjectRequestBuilder.partNumber(partNumber);
         }
 
-        return SocketAccess.doPrivileged(() -> {
-            CompletableFuture<ResponsePublisher<GetObjectResponse>> responseFuture = s3AsyncClient.getObject(
-                getObjectRequestBuilder.build(),
-                AsyncResponseTransformer.toPublisher()
-            );
-            CompletableFuture<ResponseInputStream<GetObjectResponse>> inputStreamCompletableFuture = s3AsyncClient.getObject(
-                getObjectRequestBuilder.build(),
-                AsyncResponseTransformer.toBlockingInputStream()
-            );
-            return responseFuture.thenCombine(
-                inputStreamCompletableFuture,
-                (responsePublisher, inputStream) -> transformResponseToInputStreamContainer(
-                    inputStream,
-                    isMultipartObject,
-                    partNumber,
-                    responsePublisher
-                )
-            );
-        });
+        return SocketAccess.doPrivileged(
+            () -> s3AsyncClient.getObject(getObjectRequestBuilder.build(), AsyncResponseTransformer.toBlockingInputStream())
+                .thenApply(response -> transformResponseToInputStreamContainer(response, isMultipartObject, partNumber))
+        );
     }
 
     /**
@@ -779,8 +763,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
     static InputStreamContainer transformResponseToInputStreamContainer(
         ResponseInputStream<GetObjectResponse> streamResponse,
         boolean isMultipartObject,
-        Integer partNumber,
-        ResponsePublisher<GetObjectResponse> responsePublisher
+        Integer partNumber
     ) {
         final GetObjectResponse getObjectResponse = streamResponse.response();
         final String contentRange = getObjectResponse.contentRange();
@@ -788,9 +771,8 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
         if ((isMultipartObject && contentRange == null) || contentLength == null) {
             throw SdkException.builder().message("Failed to fetch required metadata for blob part").build();
         }
-
         final long offset = isMultipartObject ? HttpRangeUtils.getStartOffsetFromRangeHeader(getObjectResponse.contentRange()) : 0L;
-        return new InputStreamContainer(streamResponse, getObjectResponse.contentLength(), offset, partNumber, responsePublisher);
+        return new InputStreamContainer(streamResponse, getObjectResponse.contentLength(), offset, partNumber);
     }
 
     /**

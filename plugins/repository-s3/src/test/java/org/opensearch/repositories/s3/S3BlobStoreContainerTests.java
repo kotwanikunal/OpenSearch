@@ -1225,7 +1225,7 @@ public class S3BlobStoreContainerTests extends OpenSearchTestCase {
         ResponseInputStream<GetObjectResponse> responseInputStreamNoRange = new ResponseInputStream<>(getObjectResponse, inputStream);
         assertThrows(
             SdkException.class,
-            () -> S3BlobContainer.transformResponseToInputStreamContainer(responseInputStreamNoRange, true, null, null)
+            () -> S3BlobContainer.transformResponseToInputStreamContainer(responseInputStreamNoRange, true, null)
         );
 
         // No exception when content range absent for single part object
@@ -1236,7 +1236,6 @@ public class S3BlobStoreContainerTests extends OpenSearchTestCase {
         InputStreamContainer inputStreamContainer = S3BlobContainer.transformResponseToInputStreamContainer(
             responseInputStreamNoRangeSinglePart,
             false,
-            null,
             null
         );
         assertEquals(contentLength, inputStreamContainer.getContentLength());
@@ -1250,13 +1249,13 @@ public class S3BlobStoreContainerTests extends OpenSearchTestCase {
         );
         assertThrows(
             SdkException.class,
-            () -> S3BlobContainer.transformResponseToInputStreamContainer(responseInputStreamNoContentLength, true, null, null)
+            () -> S3BlobContainer.transformResponseToInputStreamContainer(responseInputStreamNoContentLength, true, null)
         );
 
         // No exception when range and length both are present
         getObjectResponse = GetObjectResponse.builder().contentRange(contentRange).contentLength(contentLength).build();
         ResponseInputStream<GetObjectResponse> responseInputStream = new ResponseInputStream<>(getObjectResponse, inputStream);
-        inputStreamContainer = S3BlobContainer.transformResponseToInputStreamContainer(responseInputStream, true, null, null);
+        inputStreamContainer = S3BlobContainer.transformResponseToInputStreamContainer(responseInputStream, true, null);
         assertEquals(contentLength, inputStreamContainer.getContentLength());
         assertEquals(0, inputStreamContainer.getOffset());
         assertEquals(inputStream.available(), inputStreamContainer.getInputStream().available());
