@@ -158,14 +158,15 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
         private InputStreamContainer decryptInputStreamContainer(InputStreamContainer inputStreamContainer) {
             long startOfStream = inputStreamContainer.getOffset();
             long endOfStream = startOfStream + inputStreamContainer.getContentLength() - 1;
-            DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamOfRange(
+            DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamFromEncryptedOffsets(
                 cryptoContext,
+                getBlobSize(),
                 startOfStream,
                 endOfStream
             );
 
-            long adjustedPos = decryptedStreamProvider.getAdjustedRange()[0];
-            long adjustedLength = decryptedStreamProvider.getAdjustedRange()[1] - adjustedPos + 1;
+            long adjustedPos = decryptedStreamProvider.getAdjustedEncryptedRange()[2];
+            long adjustedLength = decryptedStreamProvider.getAdjustedEncryptedRange()[3] - adjustedPos + 1;
             final InputStream decryptedStream = decryptedStreamProvider.getDecryptedStreamProvider()
                 .apply(inputStreamContainer.getInputStream());
             return new InputStreamContainer(decryptedStream, adjustedLength, adjustedPos);

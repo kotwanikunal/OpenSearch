@@ -48,8 +48,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
-import java.util.ArrayList;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -634,6 +634,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             });
         }
     }
+
     /**
      * Checks if the file exists in the uploadedSegments cache and the checksum matches.
      * It is important to match the checksum as the same segment filename can be used for different
