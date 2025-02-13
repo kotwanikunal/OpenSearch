@@ -64,9 +64,12 @@ import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.CombinedBitSet;
 import org.apache.lucene.util.SparseFixedBitSet;
+import org.opensearch.cluster.service.ClusterService;
+import org.opensearch.common.StopWatch;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.lucene.search.TopDocsAndMaxScore;
+import org.opensearch.common.settings.Setting;
 import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.SearchService;
 import org.opensearch.search.approximate.ApproximateScoreQuery;
@@ -110,6 +113,28 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     private QueryProfiler profiler;
     private MutableQueryTimeout cancellable;
     private SearchContext searchContext;
+    private ClusterService clusterService;
+
+    public static final Setting<Boolean> CLUSTER_USE_EXPERIMENTAL_SLICE = Setting.boolSetting(
+        "cluster.indices.experimental_slicing.enable",
+        false,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
+    public ContextIndexSearcher(
+        IndexReader reader,
+        Similarity similarity,
+        QueryCache queryCache,
+        QueryCachingPolicy queryCachingPolicy,
+        boolean wrapWithExitableDirectoryReader,
+        Executor executor,
+        SearchContext searchContext,
+        ClusterService clusterService
+    ) throws IOException {
+        this(reader, similarity, queryCache, queryCachingPolicy, wrapWithExitableDirectoryReader, executor, searchContext);
+        this.clusterService = clusterService;
+    }
 
     public ContextIndexSearcher(
         IndexReader reader,
@@ -548,16 +573,23 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
 
     // package-private for testing
     LeafSlice[] slicesInternal(List<LeafReaderContext> leaves, int targetMaxSlice) {
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
         LeafSlice[] leafSlices;
         if (targetMaxSlice == 0) {
             // use the default lucene slice calculation
             leafSlices = super.slices(leaves);
             logger.debug("Slice count using lucene default [{}]", leafSlices.length);
+        } else if (clusterService != null && clusterService.getClusterSettings().get(CLUSTER_USE_EXPERIMENTAL_SLICE)) {
+            leafSlices = BalancedDocsSliceSupplier.getSlicesV2(leaves, targetMaxSlice);
+            logger.debug("Slice count using experimental slice supplier [{}]", leafSlices.length);
         } else {
             // use the custom slice calculation based on targetMaxSlice
             leafSlices = MaxTargetSliceSupplier.getSlices(leaves, targetMaxSlice);
             logger.debug("Slice count using max target slice supplier [{}]", leafSlices.length);
         }
+        stopWatch.stop();
+        logger.error("[EXPERIMENTAL] Slice time taken: {}", stopWatch.shortSummary());
         return leafSlices;
     }
 }
